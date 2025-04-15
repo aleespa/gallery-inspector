@@ -68,67 +68,85 @@ def generate_images_table(path: Path) -> pd.DataFrame:
     return df_all_clean
 
 
-def sanitize_folder_name(name: str) -> str:
-    return re.sub(r'[^\w\-_. ]', '_', name)
+def sanitize_folder_name(name: str) -> str | None:
+    if name is None:
+        return None
+    else:
+        return re.sub(r'[^\w\-_. ]', '_', name)
 
 
 def generated_directory(
         input_path: Path,
         output: Path,
-        organized_by: OrderType = 'Year/Month',
+        *args: str,
         verbose: bool = True
 ) -> None:
     image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
+    video_extensions = {'.mp4', '.mov', '.avi', '.mkv'}
+
     for file in input_path.rglob('*'):
-        if file.suffix.lower() in image_extensions:
+        if file.is_dir():
+            continue
+        suffix = file.suffix.lower()
+        is_image = suffix in image_extensions
+        is_video = suffix in video_extensions
+
+        target_dir = output
+
+        if "MediaType" in args and (is_image or is_video):
+            media_folder = "Photos" if is_image else "Videos"
+            target_dir = target_dir / media_folder
+
+        if is_image:
             try:
                 img = Image.open(file)
                 exif_data = img._getexif()
                 img.close()
 
                 exif = {}
-                for tag_id, value in exif_data.items():
-                    tag = TAGS.get(tag_id, tag_id)
-                    exif[tag] = value
-                tag_ids = {v: k for k, v in TAGS.items()}
+                if exif_data:
+                    for tag_id, value in exif_data.items():
+                        tag = TAGS.get(tag_id, tag_id)
+                        exif[tag] = value
+                    tag_ids = {v: k for k, v in TAGS.items()}
 
-                date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
-                if date_str:
-                    date = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
-                    year = f"{date.year:04d}"
-                    month = f"{date.month:02d}"
+                    date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
+                    date = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S") if date_str else None
 
-                match organized_by:
-                    case "Year/Month":
-                        target_dir = output / year / month
-                    case "Year":
-                        target_dir = output / year
-                    case "Camera":
-                        model = sanitize_folder_name(exif_data[tag_ids['Model']])
-                        target_dir = output / model
-                    case "Lens":
-                        lens = sanitize_folder_name(exif_data[tag_ids['LensModel']])
-                        target_dir = output / lens
-                    case "Camera/Lens":
-                        model = sanitize_folder_name(exif_data[tag_ids['Model']])
-                        lens = sanitize_folder_name(exif_data[tag_ids['LensModel']])
-                        target_dir = output / model / lens
-                    case _:
-                        continue
+                    vars = {
+                        "Year": f"{date.year:04d}" if date else None,
+                        "Month": f"{date.month:02d}" if date else None,
+                        "Model": sanitize_folder_name(exif_data.get(tag_ids.get('Model'))),
+                        "Lens": sanitize_folder_name(exif_data.get(tag_ids.get('LensModel')))
+                    }
 
+                    for arg in args:
+                        if arg == "MediaType":
+                            ...
+                        elif vars.get(arg) is not None:
+                            target_dir = target_dir / vars.get(arg)
+                        else:
+                            target_dir = target_dir / "No Info"
+            except Exception as e:
+                target_dir = target_dir / "No Info"
                 target_dir.mkdir(parents=True, exist_ok=True)
                 destination = target_dir / file.name
-
-                if destination.exists():
-                    stem, suffix = file.stem, file.suffix
-                    counter = 1
-                    while destination.exists():
-                        destination = target_dir / f"{stem}_{counter}{suffix}"
-                        counter += 1
-
                 shutil.copy2(file, destination)
                 if verbose:
-                    logger.info(f"{file} moved to {destination}")
+                    logger.warning(f"Error processing {file}: {e}. Moved to {destination}")
 
-            except Exception as e:
-                logger.info(f"{file} not moved: {e}")
+        elif is_video:
+            pass
+        else:
+            target_dir = target_dir / "No Info"
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        destination = target_dir / file.name
+        if destination.exists():
+            stem, suffix = file.stem, file.suffix
+            counter = 1
+            while destination.exists():
+                destination = target_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+        shutil.copy2(file, destination)
+
