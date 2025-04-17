@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
-from PIL import Image, UnidentifiedImageError, ExifTags
+from PIL import Image, UnidentifiedImageError
 from PIL.ExifTags import TAGS
 from loguru import logger
+from tqdm import tqdm
 
 from gallery_inspector.common import clean_excel_unsafe, rational_to_float
 
@@ -78,6 +79,7 @@ def sanitize_folder_name(name: str) -> str | None:
 def generated_directory(
         input_path: Path,
         output: Path,
+        by_media_type: bool,
         *args: str,
         verbose: bool = True
 ) -> None:
@@ -93,7 +95,7 @@ def generated_directory(
 
         target_dir = output
 
-        if "MediaType" in args and (is_image or is_video):
+        if by_media_type and (is_image or is_video):
             media_folder = "Photos" if is_image else "Videos"
             target_dir = target_dir / media_folder
 
@@ -121,12 +123,12 @@ def generated_directory(
                     }
 
                     for arg in args:
-                        if arg == "MediaType":
-                            ...
-                        elif vars.get(arg) is not None:
+                        if vars.get(arg) is not None:
                             target_dir = target_dir / vars.get(arg)
                         else:
                             target_dir = target_dir / "No Info"
+                else:
+                    target_dir = target_dir / "No Info"
             except Exception as e:
                 target_dir = target_dir / "No Info"
                 target_dir.mkdir(parents=True, exist_ok=True)
