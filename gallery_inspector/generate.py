@@ -9,8 +9,7 @@ import pandas as pd
 from PIL import Image, UnidentifiedImageError
 from PIL.ExifTags import TAGS
 from loguru import logger
-from tqdm import tqdm
-
+from pymediainfo import MediaInfo
 from gallery_inspector.common import clean_excel_unsafe, rational_to_float
 
 OrderType = Literal['Year/Month', 'Year', 'Camera', 'Lens', 'Camera/Lens']
@@ -84,7 +83,7 @@ def generated_directory(
         verbose: bool = True
 ) -> None:
     image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
-    video_extensions = {'.mp4', '.mov', '.avi', '.mkv'}
+    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
 
     for file in input_path.rglob('*'):
         if file.is_dir():
@@ -136,9 +135,39 @@ def generated_directory(
                 shutil.copy2(file, destination)
                 if verbose:
                     logger.warning(f"Error processing {file}: {e}. Moved to {destination}")
-
         elif is_video:
-            pass
+            try:
+                media_info = MediaInfo.parse(file)
+                creation_date = None
+                for track in media_info.tracks:
+                    if track.track_type == "General":
+                        creation_date = track.tagged_date or track.encoded_date
+                        break
+
+                date = None
+                if creation_date:
+                    # Sample format: "UTC 2017-06-24 06:53:34"
+                    match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
+                    if match:
+                        date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+
+                vars = {
+                    "Year": f"{date.year:04d}" if date else None,
+                    "Month": f"{date.month:02d}" if date else None,
+                }
+
+                for arg in args:
+                    if vars.get(arg) is not None:
+                        target_dir = target_dir / vars.get(arg)
+                    else:
+                        target_dir = target_dir / "No Info"
+                if not args:
+                    target_dir = target_dir / "No Info"
+            except Exception as e:
+                target_dir = target_dir / "No Info"
+                if verbose:
+                    logger.warning(f"Error processing video {file}: {e}. Moved to {target_dir}")
+
         else:
             target_dir = target_dir / "No Info"
 
