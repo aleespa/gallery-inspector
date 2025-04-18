@@ -3,7 +3,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, List
 
 import pandas as pd
 from PIL import Image, UnidentifiedImageError
@@ -181,3 +181,106 @@ def generated_directory(
                 counter += 1
         shutil.copy2(file, destination)
 
+
+def generated_directory_from_list(
+        files: List[Path],
+        output: Path,
+        by_media_type: bool,
+        *args: str,
+        verbose: bool = True
+) -> None:
+    image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
+    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
+
+    for file in files:
+        if file.is_dir():
+            continue
+
+        suffix = file.suffix.lower()
+        is_image = suffix in image_extensions
+        is_video = suffix in video_extensions
+
+        target_dir = output
+
+        if by_media_type and (is_image or is_video):
+            media_folder = "Photos" if is_image else "Videos"
+            target_dir = target_dir / media_folder
+
+        if is_image:
+            try:
+                img = Image.open(file)
+                exif_data = img._getexif()
+                img.close()
+
+                exif = {}
+                if exif_data:
+                    for tag_id, value in exif_data.items():
+                        tag = TAGS.get(tag_id, tag_id)
+                        exif[tag] = value
+                    tag_ids = {v: k for k, v in TAGS.items()}
+
+                    date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
+                    date = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S") if date_str else None
+
+                    vars = {
+                        "Year": f"{date.year:04d}" if date else None,
+                        "Month": f"{date.month:02d}" if date else None,
+                        "Model": sanitize_folder_name(exif_data.get(tag_ids.get('Model'))),
+                        "Lens": sanitize_folder_name(exif_data.get(tag_ids.get('LensModel')))
+                    }
+
+                    for arg in args:
+                        val = vars.get(arg)
+                        target_dir = target_dir / (val if val else "No Info")
+                else:
+                    target_dir = target_dir / "No Info"
+
+            except Exception as e:
+                target_dir = target_dir / "No Info"
+                if verbose:
+                    logger.warning(f"Error processing image {file}: {e}")
+        elif is_video:
+            try:
+                media_info = MediaInfo.parse(file)
+                creation_date = None
+                for track in media_info.tracks:
+                    if track.track_type == "General":
+                        creation_date = track.tagged_date or track.encoded_date
+                        break
+
+                date = None
+                if creation_date:
+                    match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
+                    if match:
+                        date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+
+                vars = {
+                    "Year": f"{date.year:04d}" if date else None,
+                    "Month": f"{date.month:02d}" if date else None,
+                }
+
+                for arg in args:
+                    val = vars.get(arg)
+                    target_dir = target_dir / (val if val else "No Info")
+
+                if not args:
+                    target_dir = target_dir / "No Info"
+
+            except Exception as e:
+                target_dir = target_dir / "No Info"
+                if verbose:
+                    logger.warning(f"Error processing video {file}: {e}")
+        else:
+            target_dir = target_dir / "No Info"
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        destination = target_dir / file.name
+
+        if destination.exists():
+            stem, suffix = file.stem, file.suffix
+            counter = 1
+            while destination.exists():
+                destination = target_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        shutil.copy2(file, destination)

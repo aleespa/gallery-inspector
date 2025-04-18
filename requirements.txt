@@ -5,3 +5,5 @@ rawpy~=0.24.0
 imageio~=2.37.0
 matplotlib~=3.10.1
 loguru~=0.7.3
+tqdm~=4.67.1
+pymediainfo~=7.0.1
