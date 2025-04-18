@@ -2,7 +2,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from loguru import logger
 
@@ -23,15 +23,16 @@ def rational_to_float(r):
 def compare_directories(
         path_a: Path,
         path_b: Path
-) -> tuple[List, List, List]:
-    # List files in both directories
-    files_a = set(os.listdir(path_a))
-    files_b = set(os.listdir(path_b))
+) -> Tuple[List[Path], List[Path], List[Path]]:
+    # Create mappings: relative path -> full path
+    files_a = {file.relative_to(path_a): file for file in path_a.rglob("*") if file.is_file()}
+    files_b = {file.relative_to(path_b): file for file in path_b.rglob("*") if file.is_file()}
 
-    # Find common and differing files
-    common_files = list(files_a & files_b)
-    only_in_a = list(files_a - files_b)
-    only_in_b = list(files_b - files_a)
+    # Determine common and unique relative paths
+    common_keys = files_a.keys() & files_b.keys()
+    only_in_a = [files_a[key] for key in (files_a.keys() - files_b.keys())]
+    only_in_b = [files_b[key] for key in (files_b.keys() - files_a.keys())]
+    common_files = [files_a[key] for key in common_keys]
 
     return common_files, only_in_a, only_in_b
 
