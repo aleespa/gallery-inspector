@@ -3,7 +3,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, List
+from typing import Literal, List, Optional, Dict
 
 import pandas as pd
 from PIL import Image, UnidentifiedImageError
@@ -75,6 +75,119 @@ def sanitize_folder_name(name: str) -> str | None:
         return re.sub(r'[^\w\-_. ]', '_', name)
 
 
+def _get_image_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
+    try:
+        img = Image.open(file)
+        exif_data = img._getexif()
+        img.close()
+
+        if not exif_data:
+            return None
+
+        tag_ids = {v: k for k, v in TAGS.items()}
+        date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
+        date_only = date_str.split(" ")[0] if date_str else None
+        date = datetime.strptime(date_only, "%Y:%m:%d") if date_str else None
+
+        model = exif_data.get(tag_ids.get('Model'))
+        lens = exif_data.get(tag_ids.get('LensModel'))
+
+        return {
+            "Year": f"{date.year:04d}" if date else None,
+            "Month": f"{date.month:02d}" if date else None,
+            "Model": sanitize_folder_name(model) if model else None,
+            "Lens": sanitize_folder_name(lens) if lens else None,
+        }
+    except Exception:
+        raise
+
+
+def _get_video_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
+    try:
+        media_info = MediaInfo.parse(file)
+        creation_date = None
+        for track in media_info.tracks:
+            if track.track_type == "General":
+                creation_date = track.tagged_date or track.encoded_date
+                break
+
+        date = None
+        if creation_date:
+            match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
+            if match:
+                date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+
+        if not date:
+            return None
+
+        return {
+            "Year": f"{date.year:04d}",
+            "Month": f"{date.month:02d}",
+        }
+    except Exception:
+        raise
+
+
+def _process_single_file(
+        file: Path,
+        output: Path,
+        by_media_type: bool,
+        args: tuple,
+        verbose: bool
+) -> None:
+    image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
+    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
+
+    suffix = file.suffix.lower()
+    is_image = suffix in image_extensions
+    is_video = suffix in video_extensions
+
+    target_dir = output
+
+    if by_media_type and (is_image or is_video):
+        media_folder = "Photos" if is_image else "Videos"
+        target_dir = target_dir / media_folder
+
+    try:
+        if is_image:
+            metadata = _get_image_metadata(file)
+            if metadata is None:
+                target_dir = target_dir / "No Info"
+            else:
+                for arg in args:
+                    val = metadata.get(arg)
+                    target_dir = target_dir / (val if val is not None else "No Info")
+        elif is_video:
+            metadata = _get_video_metadata(file)
+            if metadata is None:
+                target_dir = target_dir / "No Info"
+            else:
+                if not args:
+                    target_dir = target_dir / "No Info"
+                else:
+                    for arg in args:
+                        val = metadata.get(arg)
+                        target_dir = target_dir / (val if val is not None else "No Info")
+        else:
+            target_dir = target_dir / "No Info"
+    except Exception as e:
+        target_dir = target_dir / "No Info"
+        if verbose:
+            logger.warning(f"Error processing {file}: {e}")
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    destination = target_dir / file.name
+
+    if destination.exists():
+        stem, suffix = file.stem, file.suffix
+        counter = 1
+        while destination.exists():
+            destination = target_dir / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+    shutil.copy2(file, destination)
+
+
 def generated_directory(
         input_path: Path,
         output: Path,
@@ -82,104 +195,10 @@ def generated_directory(
         *args: str,
         verbose: bool = True
 ) -> None:
-    image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
-    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
-
     for file in input_path.rglob('*'):
         if file.is_dir():
             continue
-        suffix = file.suffix.lower()
-        is_image = suffix in image_extensions
-        is_video = suffix in video_extensions
-
-        target_dir = output
-
-        if by_media_type and (is_image or is_video):
-            media_folder = "Photos" if is_image else "Videos"
-            target_dir = target_dir / media_folder
-
-        if is_image:
-            try:
-                img = Image.open(file)
-                exif_data = img._getexif()
-                img.close()
-
-                exif = {}
-                if exif_data:
-                    for tag_id, value in exif_data.items():
-                        tag = TAGS.get(tag_id, tag_id)
-                        exif[tag] = value
-                    tag_ids = {v: k for k, v in TAGS.items()}
-
-                    date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
-                    date = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S") if date_str else None
-
-                    vars = {
-                        "Year": f"{date.year:04d}" if date else None,
-                        "Month": f"{date.month:02d}" if date else None,
-                        "Model": sanitize_folder_name(exif_data.get(tag_ids.get('Model'))),
-                        "Lens": sanitize_folder_name(exif_data.get(tag_ids.get('LensModel')))
-                    }
-
-                    for arg in args:
-                        if vars.get(arg) is not None:
-                            target_dir = target_dir / vars.get(arg)
-                        else:
-                            target_dir = target_dir / "No Info"
-                else:
-                    target_dir = target_dir / "No Info"
-            except Exception as e:
-                target_dir = target_dir / "No Info"
-                target_dir.mkdir(parents=True, exist_ok=True)
-                destination = target_dir / file.name
-                shutil.copy2(file, destination)
-                if verbose:
-                    logger.warning(f"Error processing {file}: {e}. Moved to {destination}")
-        elif is_video:
-            try:
-                media_info = MediaInfo.parse(file)
-                creation_date = None
-                for track in media_info.tracks:
-                    if track.track_type == "General":
-                        creation_date = track.tagged_date or track.encoded_date
-                        break
-
-                date = None
-                if creation_date:
-                    # Sample format: "UTC 2017-06-24 06:53:34"
-                    match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
-                    if match:
-                        date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-
-                vars = {
-                    "Year": f"{date.year:04d}" if date else None,
-                    "Month": f"{date.month:02d}" if date else None,
-                }
-
-                for arg in args:
-                    if vars.get(arg) is not None:
-                        target_dir = target_dir / vars.get(arg)
-                    else:
-                        target_dir = target_dir / "No Info"
-                if not args:
-                    target_dir = target_dir / "No Info"
-            except Exception as e:
-                target_dir = target_dir / "No Info"
-                if verbose:
-                    logger.warning(f"Error processing video {file}: {e}. Moved to {target_dir}")
-
-        else:
-            target_dir = target_dir / "No Info"
-
-        target_dir.mkdir(parents=True, exist_ok=True)
-        destination = target_dir / file.name
-        if destination.exists():
-            stem, suffix = file.stem, file.suffix
-            counter = 1
-            while destination.exists():
-                destination = target_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
-        shutil.copy2(file, destination)
+        _process_single_file(file, output, by_media_type, args, verbose)
 
 
 def generated_directory_from_list(
@@ -189,98 +208,9 @@ def generated_directory_from_list(
         *args: str,
         verbose: bool = True
 ) -> None:
-    image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
-    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
-
     for file in files:
         if file.is_dir():
             continue
+        _process_single_file(file, output, by_media_type, args, verbose)
 
-        suffix = file.suffix.lower()
-        is_image = suffix in image_extensions
-        is_video = suffix in video_extensions
 
-        target_dir = output
-
-        if by_media_type and (is_image or is_video):
-            media_folder = "Photos" if is_image else "Videos"
-            target_dir = target_dir / media_folder
-
-        if is_image:
-            try:
-                img = Image.open(file)
-                exif_data = img._getexif()
-                img.close()
-
-                exif = {}
-                if exif_data:
-                    for tag_id, value in exif_data.items():
-                        tag = TAGS.get(tag_id, tag_id)
-                        exif[tag] = value
-                    tag_ids = {v: k for k, v in TAGS.items()}
-
-                    date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
-                    date = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S") if date_str else None
-
-                    vars = {
-                        "Year": f"{date.year:04d}" if date else None,
-                        "Month": f"{date.month:02d}" if date else None,
-                        "Model": sanitize_folder_name(exif_data.get(tag_ids.get('Model'))),
-                        "Lens": sanitize_folder_name(exif_data.get(tag_ids.get('LensModel')))
-                    }
-
-                    for arg in args:
-                        val = vars.get(arg)
-                        target_dir = target_dir / (val if val else "No Info")
-                else:
-                    target_dir = target_dir / "No Info"
-
-            except Exception as e:
-                target_dir = target_dir / "No Info"
-                if verbose:
-                    logger.warning(f"Error processing image {file}: {e}")
-        elif is_video:
-            try:
-                media_info = MediaInfo.parse(file)
-                creation_date = None
-                for track in media_info.tracks:
-                    if track.track_type == "General":
-                        creation_date = track.tagged_date or track.encoded_date
-                        break
-
-                date = None
-                if creation_date:
-                    match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
-                    if match:
-                        date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-
-                vars = {
-                    "Year": f"{date.year:04d}" if date else None,
-                    "Month": f"{date.month:02d}" if date else None,
-                }
-
-                for arg in args:
-                    val = vars.get(arg)
-                    target_dir = target_dir / (val if val else "No Info")
-
-                if not args:
-                    target_dir = target_dir / "No Info"
-
-            except Exception as e:
-                target_dir = target_dir / "No Info"
-                if verbose:
-                    logger.warning(f"Error processing video {file}: {e}")
-        else:
-            target_dir = target_dir / "No Info"
-
-        target_dir.mkdir(parents=True, exist_ok=True)
-        destination = target_dir / file.name
-
-        if destination.exists():
-            stem, suffix = file.stem, file.suffix
-            counter = 1
-            while destination.exists():
-                destination = target_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
-
-        shutil.copy2(file, destination)
