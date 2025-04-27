@@ -133,7 +133,8 @@ def _process_single_file(
         output: Path,
         by_media_type: bool,
         args: tuple,
-        verbose: bool
+        verbose: bool,
+        on_exist: Literal['rename', 'skip'] = 'rename'
 ) -> None:
     image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
     video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
@@ -178,12 +179,17 @@ def _process_single_file(
     target_dir.mkdir(parents=True, exist_ok=True)
     destination = target_dir / file.name
 
-    if destination.exists():
-        stem, suffix = file.stem, file.suffix
-        counter = 1
-        while destination.exists():
-            destination = target_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
+    if on_exist == 'skip' and destination.exists():
+        if verbose:
+            logger.info(f"Skipping {file} as it already exists at {destination}")
+        return
+    elif on_exist == 'rename':
+        if destination.exists():
+            stem, suffix = file.stem, file.suffix
+            counter = 1
+            while destination.exists():
+                destination = target_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
 
     shutil.copy2(file, destination)
 
@@ -193,12 +199,13 @@ def generated_directory(
         output: Path,
         by_media_type: bool,
         *args: str,
-        verbose: bool = True
+        verbose: bool = True,
+        on_exist: Literal['rename', 'skip'] = 'rename',
 ) -> None:
     for file in input_path.rglob('*'):
         if file.is_dir():
             continue
-        _process_single_file(file, output, by_media_type, args, verbose)
+        _process_single_file(file, output, by_media_type, args, verbose, on_exist)
 
 
 def generated_directory_from_list(
@@ -206,11 +213,12 @@ def generated_directory_from_list(
         output: Path,
         by_media_type: bool,
         *args: str,
-        verbose: bool = True
+        verbose: bool = True,
+        on_exist: Literal['rename', 'skip'] = 'rename',
 ) -> None:
     for file in files:
         if file.is_dir():
             continue
-        _process_single_file(file, output, by_media_type, args, verbose)
+        _process_single_file(file, output, by_media_type, args, verbose, on_exist)
 
 
