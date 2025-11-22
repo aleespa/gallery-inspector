@@ -15,82 +15,101 @@ from gallery_inspector.common import clean_excel_unsafe, rational_to_float
 OrderType = Literal['Year/Month', 'Year', 'Camera', 'Lens', 'Camera/Lens']
 
 
+import concurrent.futures
+
+def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]:
+    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
+    try:
+        size_bytes = os.path.getsize(full_path)
+    except OSError:
+        return None
+
+    _, ext = os.path.splitext(f)
+    ext_clean = ext.lower().lstrip('.') or 'none'
+    image_info = {}
+    fields_list = [
+        'Model', 'LensModel', 'ISOSpeedRatings', 'FNumber',
+        'ExposureTime', 'FocalLength', 'DateTime', 'DateTimeOriginal', 'Duration'
+    ]
+    
+    media_type = 'other'
+    
+    if ext.lower() in {'.jpg', '.jpeg'}:
+        media_type = 'image'
+        try:
+            image = Image.open(full_path)
+            exif_data = image._getexif()
+
+            exif = {}
+            if exif_data:
+                for tag_id, value in exif_data.items():
+                    tag = TAGS.get(tag_id, tag_id)
+                    exif[tag] = value
+                tag_ids = {v: k for k, v in TAGS.items()}
+
+                for field in fields_list:
+                    image_info[field] = exif_data.get(tag_ids.get(field))
+        except (AttributeError, UnidentifiedImageError):
+            pass
+    
+    elif ext.lower() in video_extensions:
+        media_type = 'video'
+        try:
+            media_info = MediaInfo.parse(full_path)
+            creation_date = None
+            for track in media_info.tracks:
+                if track.track_type == "General":
+                    creation_date = track.tagged_date or track.encoded_date
+                    break
+            
+            if creation_date:
+                # Try to find a date pattern
+                match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
+                if match:
+                    # Format to match EXIF format: YYYY:MM:DD HH:MM:SS
+                    dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                    image_info['DateTimeOriginal'] = dt.strftime("%Y:%m:%d %H:%M:%S")
+                    image_info['DateTime'] = dt.strftime("%Y:%m:%d %H:%M:%S")
+            
+            # Extract duration
+            for track in media_info.tracks:
+                if track.track_type == "General":
+                    image_info['Duration'] = track.duration
+                    break
+        except Exception:
+            pass
+
+    return {'name': f,
+            'size_bytes': size_bytes,
+            'directory': dirpath,
+            'filetype': ext_clean,
+            'media_type': media_type
+            } | {field: image_info.get(field) for field in fields_list}
+
+
 def generate_images_table(path: Path) -> pd.DataFrame:
     all_files = []
-    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
-    
+    files_to_process = []
+
     for dirpath, dir_names, filenames in os.walk(path, topdown=False):
         logger.info(f'{dirpath} analyzed')
         for f in filenames:
             full_path = os.path.join(dirpath, f)
-            try:
-                size_bytes = os.path.getsize(full_path)
-            except OSError:
-                continue
-
-            _, ext = os.path.splitext(f)
-            ext_clean = ext.lower().lstrip('.') or 'none'
-            image_info = {}
-            fields_list = [
-                'Model', 'LensModel', 'ISOSpeedRatings', 'FNumber',
-                'ExposureTime', 'FocalLength', 'DateTime', 'DateTimeOriginal', 'Duration'
-            ]
+            files_to_process.append((full_path, dirpath, f))
             
-            media_type = 'other'
-            
-            if ext.lower() in {'.jpg', '.jpeg'}:
-                media_type = 'image'
-                try:
-                    image = Image.open(full_path)
-                    exif_data = image._getexif()
-
-                    exif = {}
-                    if exif_data:
-                        for tag_id, value in exif_data.items():
-                            tag = TAGS.get(tag_id, tag_id)
-                            exif[tag] = value
-                        tag_ids = {v: k for k, v in TAGS.items()}
-
-                        for field in fields_list:
-                            image_info[field] = exif_data.get(tag_ids.get(field))
-                except (AttributeError, UnidentifiedImageError):
-                    pass
-            
-            elif ext.lower() in video_extensions:
-                media_type = 'video'
-                try:
-                    media_info = MediaInfo.parse(full_path)
-                    creation_date = None
-                    for track in media_info.tracks:
-                        if track.track_type == "General":
-                            creation_date = track.tagged_date or track.encoded_date
-                            break
-                    
-                    if creation_date:
-                        # Try to find a date pattern
-                        match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
-                        if match:
-                            # Format to match EXIF format: YYYY:MM:DD HH:MM:SS
-                            dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-                            image_info['DateTimeOriginal'] = dt.strftime("%Y:%m:%d %H:%M:%S")
-                            image_info['DateTime'] = dt.strftime("%Y:%m:%d %H:%M:%S")
-                    
-                    # Extract duration
-                    for track in media_info.tracks:
-                        if track.track_type == "General":
-                            image_info['Duration'] = track.duration
-                            break
-                except Exception:
-                    pass
-
-            all_files.append({'name': f,
-                              'size_bytes': size_bytes,
-                              'directory': dirpath,
-                              'filetype': ext_clean,
-                              'media_type': media_type
-                              } | {field: image_info.get(field) for field in fields_list})
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(_analyze_single_file, fp, dp, fn) for fp, dp, fn in files_to_process]
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                all_files.append(result)
 
     df_all = pd.DataFrame(all_files)
+    fields_list = [
+        'Model', 'LensModel', 'ISOSpeedRatings', 'FNumber',
+        'ExposureTime', 'FocalLength', 'DateTime', 'DateTimeOriginal', 'Duration'
+    ]
+    
     if df_all.empty:
         return pd.DataFrame(columns=['name', 'size_bytes', 'directory', 'filetype', 'media_type', 'size (MB)'] + fields_list)
 

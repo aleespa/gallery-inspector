@@ -8,7 +8,11 @@ sys.path.append(str(ROOT))
 import streamlit as st
 import pandas as pd
 from gallery_inspector.generate import generate_images_table, generated_directory, generated_directory_from_list
-from gallery_inspector.figures import plot_interactive_timeline
+from gallery_inspector.figures import plot_interactive_timeline, plot_sunburst, plot_scatter, plot_file_types, plot_size_distribution
+
+@st.cache_data
+def cached_generate_images_table(path: Path) -> pd.DataFrame:
+    return generate_images_table(path)
 
 st.set_page_config(page_title="Gallery Inspector", layout="wide")
 
@@ -18,6 +22,8 @@ st.title("Gallery Inspector Dashboard")
 st.sidebar.header("Configuration")
 source_dir = st.sidebar.text_input("Source Directory", value="")
 analyze_btn = st.sidebar.button("Analyze")
+if st.sidebar.button("Clear Cache"):
+    st.cache_data.clear()
 
 if analyze_btn and source_dir:
     path = Path(source_dir)
@@ -26,7 +32,7 @@ if analyze_btn and source_dir:
     else:
         with st.spinner("Analyzing directory..."):
             try:
-                df = generate_images_table(path)
+                df = cached_generate_images_table(path)
                 st.session_state['df'] = df
                 st.success("Analysis complete!")
             except Exception as e:
@@ -58,6 +64,23 @@ if 'df' in st.session_state:
     c3.metric("Videos", f"{total_videos:,}")
     c4.metric("Total Size", f"{total_size_mb:,.0f} MB")
     c5.metric("Total Video Length", duration_str)
+
+    # Advanced Metrics
+    st.subheader("Advanced Metrics")
+    ac1, ac2, ac3 = st.columns(3)
+    
+    avg_size = df['size (MB)'].mean()
+    ac1.metric("Average File Size", f"{avg_size:.2f} MB")
+    
+    if 'Model' in df.columns:
+        top_camera = df['Model'].mode()
+        top_camera_str = top_camera[0] if not top_camera.empty else "N/A"
+        ac2.metric("Most Common Camera", top_camera_str)
+        
+    if 'LensModel' in df.columns:
+        top_lens = df['LensModel'].mode()
+        top_lens_str = top_lens[0] if not top_lens.empty else "N/A"
+        ac3.metric("Most Common Lens", top_lens_str)
 
     # Filters
     st.header("Data Analysis")
@@ -126,6 +149,37 @@ if 'df' in st.session_state:
         # We can use 'media_type' as the variable.
         fig_video = plot_interactive_timeline(videos_df, variable='media_type')
         st.plotly_chart(fig_video, use_container_width=True)
+
+    # New Plots
+    st.header("Visualizations")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["Sunburst (Size)", "Scatter (Exposure)", "File Types", "Size Distribution"])
+    
+    with tab1:
+        st.subheader("Directory Size Distribution")
+        fig_sunburst = plot_sunburst(filtered_df)
+        if fig_sunburst:
+            st.plotly_chart(fig_sunburst, use_container_width=True)
+        else:
+            st.info("Not enough data for Sunburst chart.")
+            
+    with tab2:
+        st.subheader("Exposure Triangle (ISO vs Shutter Speed)")
+        if 'ISOSpeedRatings' in filtered_df.columns and 'ExposureTime' in filtered_df.columns:
+            fig_scatter = plot_scatter(filtered_df, x='ISOSpeedRatings', y='ExposureTime', color='Model' if 'Model' in filtered_df.columns else None)
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("ISO or Exposure Time data missing.")
+            
+    with tab3:
+        st.subheader("File Type Distribution")
+        fig_types = plot_file_types(filtered_df)
+        st.plotly_chart(fig_types, use_container_width=True)
+        
+    with tab4:
+        st.subheader("File Size Distribution")
+        fig_size = plot_size_distribution(filtered_df)
+        st.plotly_chart(fig_size, use_container_width=True)
 
 
     # Organization
