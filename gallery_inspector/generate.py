@@ -17,6 +17,8 @@ OrderType = Literal['Year/Month', 'Year', 'Camera', 'Lens', 'Camera/Lens']
 
 def generate_images_table(path: Path) -> pd.DataFrame:
     all_files = []
+    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
+    
     for dirpath, dir_names, filenames in os.walk(path, topdown=False):
         logger.info(f'{dirpath} analyzed')
         for f in filenames:
@@ -27,43 +29,84 @@ def generate_images_table(path: Path) -> pd.DataFrame:
                 continue
 
             _, ext = os.path.splitext(f)
-            ext = ext.lower().lstrip('.') or 'none'
+            ext_clean = ext.lower().lstrip('.') or 'none'
             image_info = {}
             fields_list = [
                 'Model', 'LensModel', 'ISOSpeedRatings', 'FNumber',
-                'ExposureTime', 'FocalLength', 'DateTime', 'DateTimeOriginal'
+                'ExposureTime', 'FocalLength', 'DateTime', 'DateTimeOriginal', 'Duration'
             ]
-            if ext.upper() == "JPG":
+            
+            media_type = 'other'
+            
+            if ext.lower() in {'.jpg', '.jpeg'}:
+                media_type = 'image'
                 try:
                     image = Image.open(full_path)
                     exif_data = image._getexif()
 
                     exif = {}
-                    for tag_id, value in exif_data.items():
-                        tag = TAGS.get(tag_id, tag_id)
-                        exif[tag] = value
-                    tag_ids = {v: k for k, v in TAGS.items()}
+                    if exif_data:
+                        for tag_id, value in exif_data.items():
+                            tag = TAGS.get(tag_id, tag_id)
+                            exif[tag] = value
+                        tag_ids = {v: k for k, v in TAGS.items()}
 
-                    for field in fields_list:
-                        image_info[field] = exif_data.get(tag_ids[field])
+                        for field in fields_list:
+                            image_info[field] = exif_data.get(tag_ids.get(field))
                 except (AttributeError, UnidentifiedImageError):
+                    pass
+            
+            elif ext.lower() in video_extensions:
+                media_type = 'video'
+                try:
+                    media_info = MediaInfo.parse(full_path)
+                    creation_date = None
+                    for track in media_info.tracks:
+                        if track.track_type == "General":
+                            creation_date = track.tagged_date or track.encoded_date
+                            break
+                    
+                    if creation_date:
+                        # Try to find a date pattern
+                        match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
+                        if match:
+                            # Format to match EXIF format: YYYY:MM:DD HH:MM:SS
+                            dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                            image_info['DateTimeOriginal'] = dt.strftime("%Y:%m:%d %H:%M:%S")
+                            image_info['DateTime'] = dt.strftime("%Y:%m:%d %H:%M:%S")
+                    
+                    # Extract duration
+                    for track in media_info.tracks:
+                        if track.track_type == "General":
+                            image_info['Duration'] = track.duration
+                            break
+                except Exception:
                     pass
 
             all_files.append({'name': f,
                               'size_bytes': size_bytes,
                               'directory': dirpath,
-                              'filetype': ext
+                              'filetype': ext_clean,
+                              'media_type': media_type
                               } | {field: image_info.get(field) for field in fields_list})
 
     df_all = pd.DataFrame(all_files)
+    if df_all.empty:
+        return pd.DataFrame(columns=['name', 'size_bytes', 'directory', 'filetype', 'media_type', 'size (MB)'] + fields_list)
+
     df_all_clean = df_all.map(clean_excel_unsafe)
-    df_all['size (MB)'] = (df_all['size_bytes'] / 1048576).round(2)
-    df_all_clean['ExposureTime'] = df_all_clean['ExposureTime'].map(rational_to_float)
-    df_all_clean['FNumber'] = df_all_clean['FNumber'].map(rational_to_float)
-    df_all_clean['FocalLength'] = df_all_clean['FocalLength'].map(rational_to_float)
-    df_all_clean['DateTime'] = pd.to_datetime(df_all_clean['DateTime'], errors='coerce', format='%Y:%m:%d %H:%M:%S')
-    df_all_clean['DateTimeOriginal'] = pd.to_datetime(df_all_clean['DateTimeOriginal'], errors='coerce',
-                                                      format='%Y:%m:%d %H:%M:%S')
+    df_all_clean['size (MB)'] = (df_all['size_bytes'] / 1048576).round(2)
+    
+    # Ensure columns exist before mapping
+    for col in ['ExposureTime', 'FNumber', 'FocalLength', 'Duration']:
+        if col in df_all_clean.columns:
+            df_all_clean[col] = pd.to_numeric(df_all_clean[col], errors='coerce') if col == 'Duration' else df_all_clean[col].map(rational_to_float)
+            
+    if 'DateTime' in df_all_clean.columns:
+        df_all_clean['DateTime'] = pd.to_datetime(df_all_clean['DateTime'], errors='coerce', format='%Y:%m:%d %H:%M:%S')
+    if 'DateTimeOriginal' in df_all_clean.columns:
+        df_all_clean['DateTimeOriginal'] = pd.to_datetime(df_all_clean['DateTimeOriginal'], errors='coerce',
+                                                          format='%Y:%m:%d %H:%M:%S')
 
     return df_all_clean
 
