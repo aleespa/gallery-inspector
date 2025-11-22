@@ -80,17 +80,19 @@ def plot_sunburst(df: pd.DataFrame, path_column: str = 'directory', size_column:
     except Exception:
         df['rel_path'] = df[path_column]
 
-    df['path_parts'] = df['rel_path'].apply(lambda x: x.split(os.sep))
+    df['path_parts'] = df['rel_path'].apply(lambda x: x.split(os.sep) + ['(Files)'])
     
     # Limit depth for visualization
     max_depth = 3
     for i in range(max_depth):
-        df[f'level_{i}'] = df['path_parts'].apply(lambda x: x[i] if len(x) > i else 'root' if i==0 else None)
+        df[f'level_{i}'] = df['path_parts'].apply(lambda x: x[i] if i < len(x) else None)
     
     # Aggregate size
     # We'll group by the levels
     levels = [f'level_{i}' for i in range(max_depth)]
-    df_agg = df.groupby(levels)[size_column].sum().reset_index()
+    # fillna with a placeholder to ensure groupby doesn't drop rows, then replace back if needed
+    # or just use dropna=False which is available in newer pandas
+    df_agg = df.groupby(levels, dropna=False)[size_column].sum().reset_index()
     
     fig = px.sunburst(df_agg, path=levels, values=size_column,
                       title='Directory Size Distribution',
@@ -114,14 +116,13 @@ def plot_scatter(df: pd.DataFrame, x: str, y: str, color: str = None):
 
 def plot_file_types(df: pd.DataFrame):
     """
-    Creates a bar chart of file types.
+    Creates a pie chart of file types.
     """
     counts = df['filetype'].value_counts().reset_index()
     counts.columns = ['filetype', 'count']
     
-    fig = px.bar(counts, x='filetype', y='count',
-                 title='File Type Distribution',
-                 labels={'count': 'Count', 'filetype': 'File Type'})
+    fig = px.pie(counts, names='filetype', values='count',
+                 title='File Type Distribution')
     return fig
 
 

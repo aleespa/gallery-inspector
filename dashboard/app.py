@@ -153,33 +153,35 @@ if 'df' in st.session_state:
     # New Plots
     st.header("Visualizations")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["Sunburst (Size)", "Scatter (Exposure)", "File Types", "Size Distribution"])
+    col1, col2 = st.columns(2)
     
-    with tab1:
+    with col1:
         st.subheader("Directory Size Distribution")
         fig_sunburst = plot_sunburst(filtered_df)
         if fig_sunburst:
             st.plotly_chart(fig_sunburst, use_container_width=True)
         else:
             st.info("Not enough data for Sunburst chart.")
+
+        st.subheader("File Size Distribution")
+        fig_size = plot_size_distribution(filtered_df)
+        st.plotly_chart(fig_size, use_container_width=True)
+
+
             
-    with tab2:
+    with col2:
+        st.subheader("File Type Distribution")
+        fig_types = plot_file_types(filtered_df)
+        st.plotly_chart(fig_types, use_container_width=True)
+
+
         st.subheader("Exposure Triangle (ISO vs Shutter Speed)")
         if 'ISOSpeedRatings' in filtered_df.columns and 'ExposureTime' in filtered_df.columns:
             fig_scatter = plot_scatter(filtered_df, x='ISOSpeedRatings', y='ExposureTime', color='Model' if 'Model' in filtered_df.columns else None)
             st.plotly_chart(fig_scatter, use_container_width=True)
         else:
             st.info("ISO or Exposure Time data missing.")
-            
-    with tab3:
-        st.subheader("File Type Distribution")
-        fig_types = plot_file_types(filtered_df)
-        st.plotly_chart(fig_types, use_container_width=True)
-        
-    with tab4:
-        st.subheader("File Size Distribution")
-        fig_size = plot_size_distribution(filtered_df)
-        st.plotly_chart(fig_size, use_container_width=True)
+
 
 
     # Organization
