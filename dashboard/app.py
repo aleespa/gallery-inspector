@@ -56,7 +56,7 @@ if 'df' in st.session_state:
     c1.metric("Total Files", f"{total_files:,}")
     c2.metric("Images", f"{total_images:,}")
     c3.metric("Videos", f"{total_videos:,}")
-    c4.metric("Total Size", f"{total_size_mb:,.2f} MB")
+    c4.metric("Total Size", f"{total_size_mb:,.0f} MB")
     c5.metric("Total Video Length", duration_str)
 
     # Filters
