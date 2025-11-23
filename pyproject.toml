@@ -17,5 +17,7 @@ dependencies = [
     "streamlit>=1.51.0",
     "streamlit-aggrid>=1.2.0",
     "streamlit-extras>=0.7.8",
-    "plotly>=5.24.1"
+    "plotly>=5.24.1",
+    "flet[all]==0.28.3",
+    "kaleido>=0.2.1"
 ]
