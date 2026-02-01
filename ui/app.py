@@ -9,6 +9,7 @@ from gallery_inspector.convertor import cr2_to_jpg
 from gallery_inspector.export import export_images_table
 from gallery_inspector.generate import generate_images_table, generated_directory, Options
 from .tabs import AnalysisTab, ConvertTab, OrganizeTab
+from .components import PathSelector
 
 # Set appearance mode and color theme
 ctk.set_appearance_mode("System")
@@ -19,18 +20,32 @@ class GalleryInspectorUI(ctk.CTk):
         super().__init__()
 
         self.title("Gallery Inspector UI")
-        self.geometry("700x800")
+        self.geometry("900x700")
 
         logger.add("app_log.log", rotation="10 MB", level="INFO")
 
         # Configure grid layout
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=3) # Tabview
-        self.grid_rowconfigure(2, weight=1) # Log box
+        self.grid_columnconfigure(0, weight=1) # Left column (Selectors)
+        self.grid_columnconfigure(1, weight=2) # Right column (Tabs)
+        self.grid_rowconfigure(0, weight=1)    # Main content
+        self.grid_rowconfigure(2, weight=0)    # Log box (collapsible)
 
-        # Create Tabview
+        # Left Column: Selectors
+        self.left_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.left_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
+        self.left_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self.left_frame, text="Project Paths", font=("Arial", 18, "bold")).grid(row=0, column=0, pady=(0, 20), sticky="w")
+
+        self.input_selector = PathSelector(self.left_frame, "Input Directory:", self.browse_directory)
+        self.input_selector.grid(row=1, column=0, sticky="ew", pady=10)
+
+        self.output_selector = PathSelector(self.left_frame, "Output Directory:", self.browse_directory)
+        self.output_selector.grid(row=2, column=0, sticky="ew", pady=10)
+
+        # Right Column: Tabview
         self.tabview = ctk.CTkTabview(self)
-        self.tabview.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="nsew")
+        self.tabview.grid(row=0, column=1, padx=20, pady=(20, 10), sticky="nsew")
 
         self.tab_organize = self.tabview.add("Organize")
         self.tab_analysis = self.tabview.add("Analysis")
@@ -45,15 +60,38 @@ class GalleryInspectorUI(ctk.CTk):
         self.organize_view = OrganizeTab(self.tab_organize, self)
         self.organize_view.pack(fill="both", expand=True)
 
-        # Log Box
-        ctk.CTkLabel(self, text="Logs:").grid(row=1, column=0, padx=20, sticky="w")
-        self.log_textbox = ctk.CTkTextbox(self, height=150)
-        self.log_textbox.grid(row=2, column=0, padx=20, pady=(0, 10), sticky="nsew")
+        # Log Section
+        self.log_container = ctk.CTkFrame(self)
+        self.log_container.grid(row=1, column=0, columnspan=2, padx=20, sticky="ew")
+        self.log_container.grid_columnconfigure(0, weight=1)
+
+        self.log_header_frame = ctk.CTkFrame(self.log_container, fg_color="transparent")
+        self.log_header_frame.grid(row=0, column=0, sticky="ew")
+        self.log_header_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self.log_header_frame, text="Logs:").grid(row=0, column=0, sticky="w")
+        self.log_toggle_btn = ctk.CTkButton(self.log_header_frame, text="Show Logs", width=80, command=self.toggle_logs)
+        self.log_toggle_btn.grid(row=0, column=1, sticky="e")
+
+        self.log_textbox = ctk.CTkTextbox(self.log_container, height=150)
         self.log_textbox.configure(state="disabled")
+        self.log_visible = False
 
         # Status Label (bottom)
         self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
-        self.status_label.grid(row=3, column=0, pady=(0, 10))
+        self.status_label.grid(row=2, column=0, columnspan=2, pady=(0, 10))
+
+    def toggle_logs(self):
+        if self.log_visible:
+            self.log_textbox.grid_forget()
+            self.log_toggle_btn.configure(text="Show Logs")
+            self.log_visible = False
+            self.grid_rowconfigure(2, weight=0)
+        else:
+            self.log_textbox.grid(row=1, column=0, pady=(5, 10), sticky="nsew")
+            self.log_toggle_btn.configure(text="Hide Logs")
+            self.log_visible = True
+            self.grid_rowconfigure(2, weight=1)
 
     def log_message(self, message):
         self.log_textbox.configure(state="normal")
@@ -69,17 +107,14 @@ class GalleryInspectorUI(ctk.CTk):
 
     def run_process(self, func):
         if func == "analysis":
-            input_path = self.analysis_view.input_selector.get()
-            output_path = self.analysis_view.output_selector.get()
             btn = self.analysis_view.run_button
         elif func == "convert":
-            input_path = self.convert_view.input_selector.get()
-            output_path = self.convert_view.output_selector.get()
             btn = self.convert_view.run_button
         else: # create
-            input_path = self.organize_view.input_selector.get()
-            output_path = self.organize_view.output_selector.get()
             btn = self.organize_view.run_button
+
+        input_path = self.input_selector.get()
+        output_path = self.output_selector.get()
 
         if not input_path or not output_path:
             messagebox.showerror("Error", "Please select both input and output directories.")

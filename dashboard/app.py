@@ -186,8 +186,15 @@ if 'df' in st.session_state:
         
         # Arguments for generated_directory (it takes *args for metadata fields to use in folder structure)
         # Based on _process_single_file logic: target_dir / val1 / val2 ...
-        available_fields = ['Year', 'Month', 'Model', 'Lens'] # These seem to be the keys returned by _get_image_metadata
-        selected_structure = st.multiselect("Folder Structure (Order matters)", available_fields, default=['Year', 'Month'])
+        available_fields = ['Year', 'Month', 'Model', 'Lens']
+        
+        # User-friendly multi-select that maintains order
+        selected_structure = st.multiselect(
+            "Folder Structure (Order Matters)", 
+            available_fields, 
+            default=['Year', 'Month'],
+            help="Select the metadata fields to use for the folder hierarchy. The order of selection determines the nesting order."
+        )
         
         on_exist = st.radio("If file exists", ['rename', 'skip'], index=0)
         

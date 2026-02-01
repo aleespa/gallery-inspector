@@ -152,16 +152,23 @@ def _get_image_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
         exif_data = img._getexif()
         img.close()
 
-        if not exif_data:
-            return None
-
         tag_ids = {v: k for k, v in TAGS.items()}
-        date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
-        date_only = date_str.split(" ")[0] if date_str else None
-        date = datetime.strptime(date_only, "%Y:%m:%d") if date_str else None
+        
+        date = None
+        if exif_data:
+            date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
+            if date_str:
+                try:
+                    date_only = date_str.split(" ")[0]
+                    date = datetime.strptime(date_only, "%Y:%m:%d")
+                except (ValueError, IndexError):
+                    pass
 
-        model = exif_data.get(tag_ids.get('Model'))
-        lens = exif_data.get(tag_ids.get('LensModel'))
+        model = None
+        lens = None
+        if exif_data:
+            model = exif_data.get(tag_ids.get('Model'))
+            lens = exif_data.get(tag_ids.get('LensModel'))
 
         return {
             "Year": f"{date.year:04d}" if date else None,
@@ -170,7 +177,7 @@ def _get_image_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
             "Lens": sanitize_folder_name(lens) if lens else None,
         }
     except Exception:
-        raise
+        return None
 
 
 def _get_video_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
@@ -188,15 +195,12 @@ def _get_video_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
             if match:
                 date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
 
-        if not date:
-            return None
-
         return {
-            "Year": f"{date.year:04d}",
-            "Month": f"{date.month:02d}",
+            "Year": f"{date.year:04d}" if date else None,
+            "Month": f"{date.month:02d}" if date else None,
         }
     except Exception:
-        raise
+        return None
 
 
 def _process_single_file(

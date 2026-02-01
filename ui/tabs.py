@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from .components import PathSelector
+from .components import PathSelector, StructureSelector
 
 class BaseTab(ctk.CTkFrame):
     def __init__(self, parent, app, title, description, button_text, run_callback, **kwargs):
@@ -10,12 +10,6 @@ class BaseTab(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         
         ctk.CTkLabel(self, text=description, font=("Arial", 16, "bold")).grid(row=0, column=0, pady=10)
-        
-        self.input_selector = PathSelector(self, "Input Directory:", self.app.browse_directory)
-        self.input_selector.grid(row=1, column=0, sticky="ew", padx=20, pady=10)
-        
-        self.output_selector = PathSelector(self, "Output Directory:", self.app.browse_directory)
-        self.output_selector.grid(row=2, column=0, sticky="ew", padx=20, pady=10)
         
         self.run_button = ctk.CTkButton(self, text=button_text, command=self.on_run)
         self.run_button.grid(row=3, column=0, pady=20)
@@ -46,8 +40,6 @@ class ConvertTab(BaseTab):
             lambda: app.run_process("convert"),
             **kwargs
         )
-        self.input_selector.label.configure(text="Input Directory (CR2):")
-        self.output_selector.label.configure(text="Output Directory (JPG):")
 
 class OrganizeTab(BaseTab):
     def __init__(self, parent, app, **kwargs):
@@ -74,10 +66,12 @@ class OrganizeTab(BaseTab):
         )
         self.by_media_type_check.grid(row=0, column=0, columnspan=2, sticky="w", pady=5)
 
-        ctk.CTkLabel(self.options_frame, text="Folder Structure (comma separated):").grid(row=1, column=0, sticky="w", pady=5)
-        self.structure_entry = ctk.CTkEntry(self.options_frame)
-        self.structure_entry.insert(0, "Year, Month")
-        self.structure_entry.grid(row=1, column=1, sticky="ew", pady=5, padx=(10, 0))
+        self.structure_selector = StructureSelector(
+            self.options_frame, 
+            available_options=["Year", "Month", "Model", "Lens"],
+            initial_selection=["Year", "Month"]
+        )
+        self.structure_selector.grid(row=1, column=0, columnspan=2, sticky="ew", pady=10)
 
         ctk.CTkLabel(self.options_frame, text="On Conflict:").grid(row=2, column=0, sticky="w", pady=5)
         self.on_exist_var = ctk.StringVar(value="rename")
@@ -89,10 +83,9 @@ class OrganizeTab(BaseTab):
         self.verbose_check.grid(row=3, column=0, columnspan=2, sticky="w", pady=5)
 
     def get_options(self):
-        structure = [s.strip() for s in self.structure_entry.get().split(",") if s.strip()]
         return {
             "by_media_type": self.by_media_type_var.get(),
-            "structure": structure,
+            "structure": self.structure_selector.get(),
             "on_exist": self.on_exist_var.get(),
             "verbose": self.verbose_var.get()
         }
