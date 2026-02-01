@@ -7,7 +7,7 @@ import threading
 
 from gallery_inspector.convertor import cr2_to_jpg
 from gallery_inspector.export import export_images_table
-from gallery_inspector.generate import generate_images_table, generated_directory
+from gallery_inspector.generate import generate_images_table, generated_directory, Options
 from .tabs import AnalysisTab, ConvertTab, OrganizeTab
 
 # Set appearance mode and color theme
@@ -19,7 +19,7 @@ class GalleryInspectorUI(ctk.CTk):
         super().__init__()
 
         self.title("Gallery Inspector UI")
-        self.geometry("700x700")
+        self.geometry("700x800")
 
         logger.add("app_log.log", rotation="10 MB", level="INFO")
 
@@ -32,9 +32,9 @@ class GalleryInspectorUI(ctk.CTk):
         self.tabview = ctk.CTkTabview(self)
         self.tabview.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="nsew")
 
+        self.tab_organize = self.tabview.add("Organize")
         self.tab_analysis = self.tabview.add("Analysis")
         self.tab_convert = self.tabview.add("Convert CR2")
-        self.tab_organize = self.tabview.add("Organize")
 
         self.analysis_view = AnalysisTab(self.tab_analysis, self)
         self.analysis_view.pack(fill="both", expand=True)
@@ -105,7 +105,9 @@ class GalleryInspectorUI(ctk.CTk):
                 cr2_to_jpg(input_p, output_p)
                 msg = f"Conversion complete! JPGs saved to {output_p}"
             elif func == "create":
-                generated_directory(input_p, output_p, True, "Year", "Month")
+                options_dict = self.organize_view.get_options()
+                options = Options(**options_dict)
+                generated_directory(input_p, output_p, options)
                 msg = f"Organization complete! Files organized in {output_p}"
             
             logger.info(msg)

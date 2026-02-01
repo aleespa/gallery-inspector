@@ -19,4 +19,5 @@ dependencies = [
     "streamlit-extras>=0.7.8",
     "plotly==6.5.2",
     "customtkinter==5.2.2",
+    "pandas-stubs~=2.2.3",
 ]

@@ -55,8 +55,44 @@ class OrganizeTab(BaseTab):
             parent, 
             app,
             "Organize", 
-            "Organize files by Year/Month", 
+            "Organize files by metadata", 
             "Run Organization", 
             lambda: app.run_process("create"),
             **kwargs
         )
+        
+        # Add additional options
+        self.options_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.options_frame.grid(row=4, column=0, sticky="ew", padx=20, pady=10)
+        self.options_frame.grid_columnconfigure((0, 1), weight=1)
+
+        self.by_media_type_var = ctk.BooleanVar(value=True)
+        self.by_media_type_check = ctk.CTkCheckBox(
+            self.options_frame, 
+            text="Separate by Media Type (Photos/Videos)", 
+            variable=self.by_media_type_var
+        )
+        self.by_media_type_check.grid(row=0, column=0, columnspan=2, sticky="w", pady=5)
+
+        ctk.CTkLabel(self.options_frame, text="Folder Structure (comma separated):").grid(row=1, column=0, sticky="w", pady=5)
+        self.structure_entry = ctk.CTkEntry(self.options_frame)
+        self.structure_entry.insert(0, "Year, Month")
+        self.structure_entry.grid(row=1, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        ctk.CTkLabel(self.options_frame, text="On Conflict:").grid(row=2, column=0, sticky="w", pady=5)
+        self.on_exist_var = ctk.StringVar(value="rename")
+        self.on_exist_combo = ctk.CTkComboBox(self.options_frame, values=["rename", "skip"], variable=self.on_exist_var)
+        self.on_exist_combo.grid(row=2, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        self.verbose_var = ctk.BooleanVar(value=True)
+        self.verbose_check = ctk.CTkCheckBox(self.options_frame, text="Verbose Logging", variable=self.verbose_var)
+        self.verbose_check.grid(row=3, column=0, columnspan=2, sticky="w", pady=5)
+
+    def get_options(self):
+        structure = [s.strip() for s in self.structure_entry.get().split(",") if s.strip()]
+        return {
+            "by_media_type": self.by_media_type_var.get(),
+            "structure": structure,
+            "on_exist": self.on_exist_var.get(),
+            "verbose": self.verbose_var.get()
+        }

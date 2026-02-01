@@ -7,7 +7,7 @@ sys.path.append(str(ROOT))
 
 import streamlit as st
 import pandas as pd
-from gallery_inspector.generate import generated_directory, generated_directory_from_list
+from gallery_inspector.generate import generated_directory, generated_directory_from_list, Options
 from gallery_inspector.figures import plot_interactive_timeline, plot_sunburst, plot_scatter, plot_file_types, plot_size_distribution
 
 st.set_page_config(page_title="Gallery Inspector", layout="wide")
@@ -213,14 +213,17 @@ if 'df' in st.session_state:
                 else:
                     with st.spinner(f"Organizing {len(files_to_process)} files..."):
                         try:
-                            # generated_directory_from_list(files, output, by_media_type, *args, verbose, on_exist)
+                            options = Options(
+                                by_media_type=by_media_type,
+                                structure=selected_structure,
+                                verbose=True,
+                                on_exist=on_exist
+                            )
+                            # generated_directory_from_list(files, output, options)
                             generated_directory_from_list(
                                 files_to_process,
                                 out_path,
-                                by_media_type,
-                                *selected_structure,
-                                verbose=True,
-                                on_exist=on_exist
+                                options
                             )
                             st.success(f"Successfully organized {len(files_to_process)} files to {out_path}")
                         except Exception as e:

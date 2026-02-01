@@ -4,6 +4,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, List, Optional, Dict
+from dataclasses import dataclass, field
 
 import pandas as pd
 from PIL import Image, UnidentifiedImageError
@@ -13,6 +14,14 @@ from pymediainfo import MediaInfo
 from gallery_inspector.common import clean_excel_unsafe, rational_to_float
 
 OrderType = Literal['Year/Month', 'Year', 'Camera', 'Lens', 'Camera/Lens']
+
+
+@dataclass
+class Options:
+    by_media_type: bool = True
+    structure: List[str] = field(default_factory=lambda: ["Year", "Month"])
+    verbose: bool = True
+    on_exist: Literal['rename', 'skip'] = 'rename'
 
 
 import concurrent.futures
@@ -193,10 +202,7 @@ def _get_video_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
 def _process_single_file(
         file: Path,
         output: Path,
-        by_media_type: bool,
-        args: tuple,
-        verbose: bool,
-        on_exist: Literal['rename', 'skip'] = 'rename'
+        options: Options
 ) -> None:
     image_extensions = {'.jpg', '.jpeg', '.png', '.cr2', '.nef', '.tiff', '.arw'}
     video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.gif'}
@@ -207,7 +213,7 @@ def _process_single_file(
 
     target_dir = output
 
-    if by_media_type and (is_image or is_video):
+    if options.by_media_type and (is_image or is_video):
         media_folder = "Photos" if is_image else "Videos"
         target_dir = target_dir / media_folder
 
@@ -217,7 +223,7 @@ def _process_single_file(
             if metadata is None:
                 target_dir = target_dir / "No Info"
             else:
-                for arg in args:
+                for arg in options.structure:
                     val = metadata.get(arg)
                     target_dir = target_dir / (val if val is not None else "No Info")
         elif is_video:
@@ -225,27 +231,27 @@ def _process_single_file(
             if metadata is None:
                 target_dir = target_dir / "No Info"
             else:
-                if not args:
+                if not options.structure:
                     target_dir = target_dir / "No Info"
                 else:
-                    for arg in args:
+                    for arg in options.structure:
                         val = metadata.get(arg)
                         target_dir = target_dir / (val if val is not None else "No Info")
         else:
             target_dir = target_dir / "No Info"
     except Exception as e:
         target_dir = target_dir / "No Info"
-        if verbose:
+        if options.verbose:
             logger.warning(f"Error processing {file}: {e}")
 
     target_dir.mkdir(parents=True, exist_ok=True)
     destination = target_dir / file.name
 
-    if on_exist == 'skip' and destination.exists():
-        if verbose:
+    if options.on_exist == 'skip' and destination.exists():
+        if options.verbose:
             logger.info(f"Skipping {file} as it already exists at {destination}")
         return
-    elif on_exist == 'rename':
+    elif options.on_exist == 'rename':
         if destination.exists():
             stem, suffix = file.stem, file.suffix
             counter = 1
@@ -259,28 +265,23 @@ def _process_single_file(
 def generated_directory(
         input_path: Path,
         output: Path,
-        by_media_type: bool,
-        *args: str,
-        verbose: bool = True,
-        on_exist: Literal['rename', 'skip'] = 'rename',
+        options: Options
 ) -> None:
+    logger.info(f"Processing {input_path} -> {output}")
     for file in input_path.rglob('*'):
         if file.is_dir():
             continue
-        _process_single_file(file, output, by_media_type, args, verbose, on_exist)
+        _process_single_file(file, output, options)
 
 
 def generated_directory_from_list(
         files: List[Path],
         output: Path,
-        by_media_type: bool,
-        *args: str,
-        verbose: bool = True,
-        on_exist: Literal['rename', 'skip'] = 'rename',
+        options: Options
 ) -> None:
     for file in files:
         if file.is_dir():
             continue
-        _process_single_file(file, output, by_media_type, args, verbose, on_exist)
+        _process_single_file(file, output, options)
 
 
