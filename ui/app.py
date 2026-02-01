@@ -20,9 +20,11 @@ class GalleryInspectorUI(ctk.CTk):
         super().__init__()
 
         self.title("Gallery Inspector UI")
-        self.geometry("900x700")
+        self.geometry("1200x700")
 
         logger.add("app_log.log", rotation="10 MB", level="INFO")
+        # Add a sink to redirect loguru logs to the UI log box
+        logger.add(self._log_sink, level="INFO")
 
         # Configure grid layout
         self.grid_columnconfigure(0, weight=1) # Left column (Selectors)
@@ -81,6 +83,11 @@ class GalleryInspectorUI(ctk.CTk):
         self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
         self.status_label.grid(row=2, column=0, columnspan=2, pady=(0, 10))
 
+    def _log_sink(self, message):
+        # loguru messages can be serialized or objects, we want the formatted string
+        msg = message.record["level"].name + ": " + message.record["message"]
+        self.after(0, lambda: self.log_message(msg))
+
     def toggle_logs(self):
         if self.log_visible:
             self.log_textbox.grid_forget()
@@ -122,7 +129,7 @@ class GalleryInspectorUI(ctk.CTk):
 
         btn.configure(state="disabled")
         self.status_label.configure(text=f"Processing {func}...", text_color="orange")
-        self.log_message(f"START: Processing {func}...")
+        logger.info(f"START: Processing {func}...")
 
         # Run in a separate thread to keep UI responsive
         threading.Thread(target=self.execute, args=(func, input_path, output_path, btn), daemon=True).start()
@@ -146,11 +153,9 @@ class GalleryInspectorUI(ctk.CTk):
                 msg = f"Organization complete! Files organized in {output_p}"
             
             logger.info(msg)
-            self.after(0, lambda: self.log_message(f"INFO: {msg}"))
             self.after(0, lambda: self.finish_success(msg, btn))
         except Exception as e:
             logger.error(f"Error: {e}")
-            self.after(0, lambda: self.log_message(f"ERROR: {e}"))
             self.after(0, lambda: self.finish_error(str(e), btn))
 
     def finish_success(self, msg, btn):
