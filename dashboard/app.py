@@ -226,7 +226,15 @@ if 'df' in st.session_state:
                                 verbose=True,
                                 on_exist=on_exist
                             )
-                            # generated_directory_from_list(files, output, options)
+                            # generated_directory(input_paths, output, options)
+                            # Since dashboard works on a single directory path (which is the parent of all files in the Excel)
+                            # but here it uses a list of files, generated_directory_from_list is better.
+                            # However, to maintain parity with the new API, I'll just note that generated_directory_from_list
+                            # is unchanged and still useful.
+                            
+                            # If we wanted to use generated_directory with multiple paths:
+                            # generated_directory([out_path.parent], out_path, options) 
+                            
                             generated_directory_from_list(
                                 files_to_process,
                                 out_path,

@@ -97,17 +97,18 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
             } | {field: image_info.get(field) for field in fields_list}
 
 
-def generate_images_table(path: Path, stop_event: Optional[threading.Event] = None) -> pd.DataFrame:
+def generate_images_table(paths: List[Path], stop_event: Optional[threading.Event] = None) -> pd.DataFrame:
     all_files = []
     files_to_process = []
 
-    for dirpath, dir_names, filenames in os.walk(path, topdown=False):
-        if stop_event and stop_event.is_set():
-            return pd.DataFrame()
-        logger.info(f'{dirpath} analyzed')
-        for f in filenames:
-            full_path = os.path.join(dirpath, f)
-            files_to_process.append((full_path, dirpath, f))
+    for path in paths:
+        for dirpath, dir_names, filenames in os.walk(path, topdown=False):
+            if stop_event and stop_event.is_set():
+                return pd.DataFrame()
+            logger.info(f'{dirpath} analyzed')
+            for f in filenames:
+                full_path = os.path.join(dirpath, f)
+                files_to_process.append((full_path, dirpath, f))
             
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(_analyze_single_file, fp, dp, fn) for fp, dp, fn in files_to_process]
@@ -271,19 +272,20 @@ def _process_single_file(
 
 
 def generated_directory(
-        input_path: Path,
+        input_paths: List[Path],
         output: Path,
         options: Options,
         stop_event: Optional[threading.Event] = None
 ) -> None:
-    logger.info(f"Processing {input_path} -> {output}")
-    for file in input_path.rglob('*'):
-        if stop_event and stop_event.is_set():
-            logger.warning("Organization stopped by user.")
-            return
-        if file.is_dir():
-            continue
-        _process_single_file(file, output, options)
+    for input_path in input_paths:
+        logger.info(f"Processing {input_path} -> {output}")
+        for file in input_path.rglob('*'):
+            if stop_event and stop_event.is_set():
+                logger.warning("Organization stopped by user.")
+                return
+            if file.is_dir():
+                continue
+            _process_single_file(file, output, options)
 
 
 def generated_directory_from_list(

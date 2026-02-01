@@ -489,6 +489,7 @@ dependencies = [
     { name = "streamlit" },
     { name = "streamlit-aggrid" },
     { name = "streamlit-extras" },
+    { name = "tkinterdnd2-universal" },
     { name = "tqdm" },
 ]
 
@@ -513,6 +514,7 @@ requires-dist = [
     { name = "streamlit", specifier = "==1.53.1" },
     { name = "streamlit-aggrid", specifier = "==1.2.1.post2" },
     { name = "streamlit-extras", specifier = ">=0.7.8" },
+    { name = "tkinterdnd2-universal", specifier = ">=1.7.3" },
     { name = "tqdm", specifier = "==4.67.2" },
 ]
 
@@ -1806,6 +1808,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0a/d4/2b0cd0fe285e14b36db076e78c93766ff1d529d70408bd1d2a5a84f1d929/tenacity-9.1.2.tar.gz", hash = "sha256:1169d376c297e7de388d18b4481760d478b0e99a777cad3a9c86e556f4b697cb", size = 48036, upload-time = "2025-04-02T08:25:09.966Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/30/643397144bfbfec6f6ef821f36f33e57d35946c44a2352d3c9f0ae847619/tenacity-9.1.2-py3-none-any.whl", hash = "sha256:f77bf36710d8b73a50b2dd155c97b870017ad21afe6ab300326b0371b3b05138", size = 28248, upload-time = "2025-04-02T08:25:07.678Z" },
+]
+
+[[package]]
+name = "tkinterdnd2-universal"
+version = "1.7.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/13/41448e4c49fd4afb0eaabb442d091fd3cdf0f2f94d95b2030591c7ab37e8/tkinterdnd2-universal-1.7.3.tar.gz", hash = "sha256:658b68cc6b733176993bfc72ad11d479c6d086c7c89e536668bab51a36c50e98", size = 363441, upload-time = "2023-03-21T03:06:31.214Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/76/83cb9e213f583719b78e16384a3a3d0d1bf83aabc4c99e3ae7fe735365eb/tkinterdnd2_universal-1.7.3-py3-none-any.whl", hash = "sha256:5a0a5844c596951ed67c7b8c992abcced67fef87349557250de27419e12f70bf", size = 404676, upload-time = "2023-03-21T03:06:29.202Z" },
 ]
 
 [[package]]

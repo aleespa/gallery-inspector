@@ -33,6 +33,7 @@ def build():
         "--collect-all=pymediainfo",
         "--collect-all=imageio",
         "--collect-all=rawpy",
+        "--collect-all=tkinterdnd2",
     ]
     
     for exc in excludes:

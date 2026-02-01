@@ -1,24 +1,34 @@
 import sys
 import tkinter as tk
+# Mock tix for Python 3.13+ compatibility with tkinterdnd2
+if not hasattr(tk, 'tix'):
+    class DummyTix:
+        Tk = tk.Tk
+    sys.modules['tkinter.tix'] = DummyTix
+    tk.tix = DummyTix
+
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from pathlib import Path
 from loguru import logger
 import threading
 
+from tkinterdnd2 import DND_FILES, TkinterDnD
+
 from gallery_inspector.convertor import cr2_to_jpg
 from gallery_inspector.export import export_images_table
 from gallery_inspector.generate import generate_images_table, generated_directory, Options
 from .tabs import AnalysisTab, ConvertTab, OrganizeTab
-from .components import PathSelector
+from .components import PathSelector, MultiPathSelector
 
 # Set appearance mode and color theme
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
-class GalleryInspectorUI(ctk.CTk):
+class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
+        self.TkdndVersion = TkinterDnD._require(self)
 
         self.title("Gallery Inspector UI")
         self.geometry("1200x700")
@@ -52,8 +62,9 @@ class GalleryInspectorUI(ctk.CTk):
 
         ctk.CTkLabel(self.left_frame, text="Project Paths", font=("Arial", 18, "bold")).grid(row=0, column=0, pady=(0, 20), sticky="w")
 
-        self.input_selector = PathSelector(self.left_frame, "Input Directory:", self.browse_directory)
+        self.input_selector = MultiPathSelector(self.left_frame, "Input Directories:")
         self.input_selector.grid(row=1, column=0, sticky="ew", pady=10)
+        self.input_selector.setup_dnd(self)
 
         self.output_selector = PathSelector(self.left_frame, "Output Directory:", self.browse_directory)
         self.output_selector.grid(row=2, column=0, sticky="ew", pady=10)
@@ -150,11 +161,11 @@ class GalleryInspectorUI(ctk.CTk):
         else: # create
             btn = self.organize_view.run_button
 
-        input_path = self.input_selector.get()
+        input_paths = self.input_selector.get_paths()
         output_path = self.output_selector.get()
 
-        if not input_path or not output_path:
-            messagebox.showerror("Error", "Please select both input and output directories.")
+        if not input_paths or not output_path:
+            messagebox.showerror("Error", "Please select at least one input directory and an output directory.")
             return
 
         btn.configure(state="disabled")
@@ -166,15 +177,15 @@ class GalleryInspectorUI(ctk.CTk):
         logger.info(f"START: Processing {func}...")
 
         # Run in a separate thread to keep UI responsive
-        threading.Thread(target=self.execute, args=(func, input_path, output_path, btn), daemon=True).start()
+        threading.Thread(target=self.execute, args=(func, input_paths, output_path, btn), daemon=True).start()
 
-    def execute(self, func, input_path, output_path, btn):
+    def execute(self, func, input_paths, output_path, btn):
         try:
-            input_p = Path(input_path)
+            input_ps = [Path(p) for p in input_paths]
             output_p = Path(output_path)
             
             if func == "analysis":
-                df = generate_images_table(input_p, stop_event=self.stop_event)
+                df = generate_images_table(input_ps, stop_event=self.stop_event)
                 if self.stop_event.is_set():
                     logger.warning("Analysis stopped.")
                     self.after(0, lambda: self.finish_stopped(btn))
@@ -182,7 +193,7 @@ class GalleryInspectorUI(ctk.CTk):
                 export_images_table(df, output_p / "images_table.xlsx")
                 msg = f"Analysis complete! Results saved to {output_p / 'images_table.xlsx'}"
             elif func == "convert":
-                cr2_to_jpg(input_p, output_p, stop_event=self.stop_event)
+                cr2_to_jpg(input_ps, output_p, stop_event=self.stop_event)
                 if self.stop_event.is_set():
                     logger.warning("Conversion stopped.")
                     self.after(0, lambda: self.finish_stopped(btn))
@@ -191,7 +202,7 @@ class GalleryInspectorUI(ctk.CTk):
             elif func == "create":
                 options_dict = self.organize_view.get_options()
                 options = Options(**options_dict)
-                generated_directory(input_p, output_p, options, stop_event=self.stop_event)
+                generated_directory(input_ps, output_p, options, stop_event=self.stop_event)
                 if self.stop_event.is_set():
                     logger.warning("Organization stopped.")
                     self.after(0, lambda: self.finish_stopped(btn))

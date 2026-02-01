@@ -1,5 +1,112 @@
 import tkinter as tk
+from tkinter import filedialog
 import customtkinter as ctk
+from tkinterdnd2 import DND_FILES, TkinterDnD
+import os
+
+class MultiPathSelector(ctk.CTkFrame):
+    def __init__(self, parent, label_text, **kwargs):
+        super().__init__(parent, fg_color="transparent", **kwargs)
+        self.paths = []
+        
+        self.grid_columnconfigure(0, weight=1)
+        
+        self.label = ctk.CTkLabel(self, text=label_text, font=("Arial", 14, "bold"))
+        self.label.grid(row=0, column=0, sticky="w", pady=(0, 5))
+        
+        # Drag and Drop Area
+        self.drop_frame = ctk.CTkFrame(self, height=100, border_width=2, border_color="gray")
+        self.drop_frame.grid(row=1, column=0, sticky="ew", pady=5)
+        self.drop_frame.grid_propagate(False)
+        self.drop_frame.grid_columnconfigure(0, weight=1)
+        self.drop_frame.grid_rowconfigure(0, weight=1)
+        
+        self.drop_label = ctk.CTkLabel(self.drop_frame, text="Drag & Drop Folders Here\nor", text_color="gray")
+        self.drop_label.grid(row=0, column=0, pady=(10, 0))
+        
+        self.browse_btn = ctk.CTkButton(self.drop_frame, text="Browse Folders", width=120, command=self._browse_folders)
+        self.browse_btn.grid(row=1, column=0, pady=(0, 10))
+        
+        # List of added paths
+        self.list_frame = ctk.CTkScrollableFrame(self, height=150)
+        self.list_frame.grid(row=2, column=0, sticky="ew", pady=5)
+        self.list_frame.grid_columnconfigure(0, weight=1)
+        
+        # Register for Drag and Drop
+        # We need to use the actual tkinter widget for dnd2
+        self.drop_frame.bind("<Enter>", lambda e: self.drop_frame.configure(border_color="blue"))
+        self.drop_frame.bind("<Leave>", lambda e: self.drop_frame.configure(border_color="gray"))
+        
+        # This will be called from app.py to set up the actual dnd hooks
+        # because the main window needs to be a TkinterDnD.Tk instance
+
+    def setup_dnd(self, tk_widget):
+        tk_widget.drop_target_register(DND_FILES)
+        tk_widget.dnd_bind('<<Drop>>', self._on_drop)
+
+    def _on_drop(self, event):
+        data = event.data
+        # Handle different platforms and multiple files
+        if data.startswith('{'):
+            # Windows style multiple paths with spaces
+            import re
+            paths = re.findall(r'\{(.*?)\}', data)
+            if not paths:
+                paths = data.split() # fallback
+        else:
+            paths = data.split() # might not work with spaces
+            
+        # Refined path splitting for Windows if curly braces are not used
+        if not data.startswith('{') and ' ' in data:
+             # Try to split by spaces but respect quoted paths if dnd2 provides them
+             import shlex
+             try:
+                 paths = shlex.split(data)
+             except ValueError:
+                 paths = [data]
+
+        for p in paths:
+            p = p.strip('{}')
+            if os.path.isdir(p):
+                self.add_path(p)
+
+    def _browse_folders(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.add_path(directory)
+
+    def add_path(self, path):
+        if path not in self.paths:
+            self.paths.append(path)
+            self._refresh_list()
+
+    def remove_path(self, path):
+        if path in self.paths:
+            self.paths.remove(path)
+            self._refresh_list()
+
+    def _refresh_list(self):
+        for widget in self.list_frame.winfo_children():
+            widget.destroy()
+            
+        if not self.paths:
+            ctk.CTkLabel(self.list_frame, text="No directories added", text_color="gray").grid(row=0, column=0, pady=20)
+            return
+
+        for idx, path in enumerate(self.paths):
+            item = ctk.CTkFrame(self.list_frame, fg_color="transparent")
+            item.grid(row=idx, column=0, sticky="ew", pady=2)
+            item.grid_columnconfigure(0, weight=1)
+            
+            lbl = ctk.CTkLabel(item, text=path, anchor="w", wraplength=300)
+            lbl.grid(row=0, column=0, sticky="w", padx=5)
+            
+            btn = ctk.CTkButton(item, text="X", width=30, height=30, fg_color="#ff4a4c", hover_color="#933032", 
+                                command=lambda p=path: self.remove_path(p))
+            btn.grid(row=0, column=1, padx=5)
+
+    def get_paths(self):
+        return self.paths
 
 class PathSelector(ctk.CTkFrame):
     def __init__(self, parent, label_text, browse_callback, **kwargs):

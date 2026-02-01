@@ -20,6 +20,7 @@ dependencies = [
     "plotly==6.5.2",
     "customtkinter==5.2.2",
     "pandas-stubs~=2.2.3",
+    "tkinterdnd2-universal>=1.7.3",
 ]
 
 [dependency-groups]
