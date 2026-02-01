@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
+import customtkinter as ctk
 from pathlib import Path
 from loguru import logger
 import threading
@@ -8,69 +9,138 @@ from gallery_inspector.convertor import cr2_to_jpg
 from gallery_inspector.export import export_images_table
 from gallery_inspector.generate import generate_images_table, generated_directory
 
-class GalleryInspectorUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Gallery Inspector UI")
-        self.root.geometry("600x400")
+# Set appearance mode and color theme
+ctk.set_appearance_mode("System")
+ctk.set_default_color_theme("blue")
+
+class GalleryInspectorUI(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("Gallery Inspector UI")
+        self.geometry("700x700")
 
         logger.add("app_log.log", rotation="10 MB", level="INFO")
 
-        # Input Directory
-        tk.Label(root, text="Input Directory:").pack(pady=(10, 0))
-        self.input_entry = tk.Entry(root, width=70)
-        self.input_entry.pack(pady=5)
-        tk.Button(root, text="Browse", command=self.browse_input).pack()
+        # Configure grid layout
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=3) # Tabview
+        self.grid_rowconfigure(1, weight=1) # Log box
 
-        # Output Directory
-        tk.Label(root, text="Output Directory:").pack(pady=(10, 0))
-        self.output_entry = tk.Entry(root, width=70)
-        self.output_entry.pack(pady=5)
-        tk.Button(root, text="Browse", command=self.browse_output).pack()
+        # Create Tabview
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="nsew")
 
-        # Function Selection
-        tk.Label(root, text="Function:").pack(pady=(10, 0))
-        self.function_var = tk.StringVar(value="analysis")
-        functions = [("Analysis", "analysis"), ("Convert CR2 to JPG", "convert"), ("Create Organized Directory", "create")]
-        for text, val in functions:
-            tk.Radiobutton(root, text=text, variable=self.function_var, value=val).pack()
+        self.tab_analysis = self.tabview.add("Analysis")
+        self.tab_convert = self.tabview.add("Convert CR2")
+        self.tab_organize = self.tabview.add("Organize")
 
-        # Action Button
-        self.run_button = tk.Button(root, text="Run", command=self.run_process, bg="green", fg="white", font=("Arial", 12, "bold"))
-        self.run_button.pack(pady=20)
+        self.setup_analysis_tab()
+        self.setup_convert_tab()
+        self.setup_organize_tab()
 
-        # Status Label
-        self.status_label = tk.Label(root, text="Ready", fg="blue")
-        self.status_label.pack()
+        # Log Box
+        ctk.CTkLabel(self, text="Logs:").grid(row=1, column=0, padx=20, sticky="w")
+        self.log_textbox = ctk.CTkTextbox(self, height=150)
+        self.log_textbox.grid(row=2, column=0, padx=20, pady=(0, 10), sticky="nsew")
+        self.log_textbox.configure(state="disabled")
 
-    def browse_input(self):
+        # Status Label (bottom)
+        self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
+        self.status_label.grid(row=3, column=0, pady=(0, 10))
+
+    def log_message(self, message):
+        self.log_textbox.configure(state="normal")
+        self.log_textbox.insert(tk.END, f"{message}\n")
+        self.log_textbox.see(tk.END)
+        self.log_textbox.configure(state="disabled")
+
+    def setup_analysis_tab(self):
+        self.tab_analysis.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(self.tab_analysis, text="Analyze directory and export to Excel", font=("Arial", 16, "bold")).grid(row=0, column=0, pady=10)
+
+        # Input
+        self.analysis_input = self.create_path_selector(self.tab_analysis, "Input Directory:", 1)
+        # Output
+        self.analysis_output = self.create_path_selector(self.tab_analysis, "Output Directory:", 3)
+
+        self.btn_run_analysis = ctk.CTkButton(self.tab_analysis, text="Run Analysis", command=lambda: self.run_process("analysis"))
+        self.btn_run_analysis.grid(row=5, column=0, pady=20)
+
+    def setup_convert_tab(self):
+        self.tab_convert.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(self.tab_convert, text="Convert CR2 files to JPG", font=("Arial", 16, "bold")).grid(row=0, column=0, pady=10)
+
+        # Input
+        self.convert_input = self.create_path_selector(self.tab_convert, "Input Directory (CR2):", 1)
+        # Output
+        self.convert_output = self.create_path_selector(self.tab_convert, "Output Directory (JPG):", 3)
+
+        self.btn_run_convert = ctk.CTkButton(self.tab_convert, text="Run Conversion", command=lambda: self.run_process("convert"))
+        self.btn_run_convert.grid(row=5, column=0, pady=20)
+
+    def setup_organize_tab(self):
+        self.tab_organize.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(self.tab_organize, text="Organize files by Year/Month", font=("Arial", 16, "bold")).grid(row=0, column=0, pady=10)
+
+        # Input
+        self.organize_input = self.create_path_selector(self.tab_organize, "Input Directory:", 1)
+        # Output
+        self.organize_output = self.create_path_selector(self.tab_organize, "Output Directory:", 3)
+
+        self.btn_run_organize = ctk.CTkButton(self.tab_organize, text="Run Organization", command=lambda: self.run_process("create"))
+        self.btn_run_organize.grid(row=5, column=0, pady=20)
+
+    def create_path_selector(self, parent, label_text, start_row):
+        ctk.CTkLabel(parent, text=label_text).grid(row=start_row, column=0, sticky="w", padx=20)
+        
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.grid(row=start_row+1, column=0, sticky="ew", padx=20, pady=(0, 10))
+        frame.grid_columnconfigure(0, weight=1)
+
+        entry = ctk.CTkEntry(frame)
+        entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        
+        btn = ctk.CTkButton(frame, text="Browse", width=100, command=lambda: self.browse_directory(entry))
+        btn.grid(row=0, column=1)
+        
+        return entry
+
+    def browse_directory(self, entry):
         directory = filedialog.askdirectory()
         if directory:
-            self.input_entry.delete(0, tk.END)
-            self.input_entry.insert(0, directory)
+            entry.delete(0, tk.END)
+            entry.insert(0, directory)
 
-    def browse_output(self):
-        directory = filedialog.askdirectory()
-        if directory:
-            self.output_entry.delete(0, tk.END)
-            self.output_entry.insert(0, directory)
-
-    def run_process(self):
-        input_path = self.input_entry.get()
-        output_path = self.output_entry.get()
-        func = self.function_var.get()
+    def run_process(self, func):
+        if func == "analysis":
+            input_path = self.analysis_input.get()
+            output_path = self.analysis_output.get()
+            btn = self.btn_run_analysis
+        elif func == "convert":
+            input_path = self.convert_input.get()
+            output_path = self.convert_output.get()
+            btn = self.btn_run_convert
+        else: # create
+            input_path = self.organize_input.get()
+            output_path = self.organize_output.get()
+            btn = self.btn_run_organize
 
         if not input_path or not output_path:
             messagebox.showerror("Error", "Please select both input and output directories.")
             return
 
-        self.run_button.config(state="disabled")
-        self.status_label.config(text="Processing...", fg="orange")
+        btn.configure(state="disabled")
+        self.status_label.configure(text=f"Processing {func}...", text_color="orange")
+        self.log_message(f"START: Processing {func}...")
 
         # Run in a separate thread to keep UI responsive
-        threading.Thread(target=self.execute, args=(func, input_path, output_path), daemon=True).start()
+        threading.Thread(target=self.execute, args=(func, input_path, output_path, btn), daemon=True).start()
 
-    def execute(self, func, input_path, output_path):
+    def execute(self, func, input_path, output_path, btn):
         try:
             input_p = Path(input_path)
             output_p = Path(output_path)
@@ -87,22 +157,23 @@ class GalleryInspectorUI:
                 msg = f"Organization complete! Files organized in {output_p}"
             
             logger.info(msg)
-            self.root.after(0, lambda: self.finish_success(msg))
+            self.after(0, lambda: self.log_message(f"INFO: {msg}"))
+            self.after(0, lambda: self.finish_success(msg, btn))
         except Exception as e:
             logger.error(f"Error: {e}")
-            self.root.after(0, lambda: self.finish_error(str(e)))
+            self.after(0, lambda: self.log_message(f"ERROR: {e}"))
+            self.after(0, lambda: self.finish_error(str(e), btn))
 
-    def finish_success(self, msg):
-        self.run_button.config(state="normal")
-        self.status_label.config(text="Success!", fg="green")
+    def finish_success(self, msg, btn):
+        btn.configure(state="normal")
+        self.status_label.configure(text="Success!", text_color="green")
         messagebox.showinfo("Success", msg)
 
-    def finish_error(self, err):
-        self.run_button.config(state="normal")
-        self.status_label.config(text="Error occurred", fg="red")
+    def finish_error(self, err, btn):
+        btn.configure(state="normal")
+        self.status_label.configure(text="Error occurred", text_color="red")
         messagebox.showerror("Error", f"An error occurred: {err}")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = GalleryInspectorUI(root)
-    root.mainloop()
+    app = GalleryInspectorUI()
+    app.mainloop()

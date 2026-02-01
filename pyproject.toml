@@ -18,4 +18,5 @@ dependencies = [
     "streamlit-aggrid==1.2.1.post2",
     "streamlit-extras>=0.7.8",
     "plotly==6.5.2",
+    "customtkinter==5.2.2",
 ]
