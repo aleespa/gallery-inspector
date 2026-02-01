@@ -11,7 +11,7 @@ class BaseTab(ctk.CTkFrame):
         
         ctk.CTkLabel(self, text=description, font=("Arial", 16, "bold")).grid(row=0, column=0, pady=10)
         
-        self.run_button = ctk.CTkButton(self, text=button_text, command=self.on_run)
+        self.run_button = ctk.CTkButton(self, text=button_text, command=self.on_run, fg_color="green", hover_color="darkgreen")
         self.run_button.grid(row=3, column=0, pady=20)
 
     def on_run(self):

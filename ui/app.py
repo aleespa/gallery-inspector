@@ -83,6 +83,23 @@ class GalleryInspectorUI(ctk.CTk):
         self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
         self.status_label.grid(row=2, column=0, columnspan=2, pady=(0, 10))
 
+        # Stop Button (hidden by default, shown when running)
+        self.stop_button = ctk.CTkButton(
+            self.left_frame, 
+            text="STOP EXECUTION", 
+            fg_color="red", 
+            hover_color="darkred", 
+            command=self.stop_process
+        )
+        self.stop_event = threading.Event()
+
+    def stop_process(self):
+        if self.stop_event:
+            self.stop_event.set()
+            logger.warning("Stop requested by user...")
+            self.status_label.configure(text="Stopping...", text_color="red")
+            self.stop_button.configure(state="disabled")
+
     def _log_sink(self, message):
         # loguru messages can be serialized or objects, we want the formatted string
         msg = message.record["level"].name + ": " + message.record["message"]
@@ -128,6 +145,10 @@ class GalleryInspectorUI(ctk.CTk):
             return
 
         btn.configure(state="disabled")
+        self.stop_event.clear()
+        self.stop_button.grid(row=3, column=0, pady=20, sticky="ew")
+        self.stop_button.configure(state="normal")
+        
         self.status_label.configure(text=f"Processing {func}...", text_color="orange")
         logger.info(f"START: Processing {func}...")
 
@@ -140,30 +161,53 @@ class GalleryInspectorUI(ctk.CTk):
             output_p = Path(output_path)
             
             if func == "analysis":
-                df = generate_images_table(input_p)
+                df = generate_images_table(input_p, stop_event=self.stop_event)
+                if self.stop_event.is_set():
+                    logger.warning("Analysis stopped.")
+                    self.after(0, lambda: self.finish_stopped(btn))
+                    return
                 export_images_table(df, output_p / "images_table.xlsx")
                 msg = f"Analysis complete! Results saved to {output_p / 'images_table.xlsx'}"
             elif func == "convert":
-                cr2_to_jpg(input_p, output_p)
+                cr2_to_jpg(input_p, output_p, stop_event=self.stop_event)
+                if self.stop_event.is_set():
+                    logger.warning("Conversion stopped.")
+                    self.after(0, lambda: self.finish_stopped(btn))
+                    return
                 msg = f"Conversion complete! JPGs saved to {output_p}"
             elif func == "create":
                 options_dict = self.organize_view.get_options()
                 options = Options(**options_dict)
-                generated_directory(input_p, output_p, options)
+                generated_directory(input_p, output_p, options, stop_event=self.stop_event)
+                if self.stop_event.is_set():
+                    logger.warning("Organization stopped.")
+                    self.after(0, lambda: self.finish_stopped(btn))
+                    return
                 msg = f"Organization complete! Files organized in {output_p}"
             
             logger.info(msg)
             self.after(0, lambda: self.finish_success(msg, btn))
         except Exception as e:
-            logger.error(f"Error: {e}")
-            self.after(0, lambda: self.finish_error(str(e), btn))
+            if self.stop_event.is_set():
+                 self.after(0, lambda: self.finish_stopped(btn))
+            else:
+                logger.error(f"Error: {e}")
+                self.after(0, lambda: self.finish_error(str(e), btn))
 
     def finish_success(self, msg, btn):
         btn.configure(state="normal")
+        self.stop_button.grid_forget()
         self.status_label.configure(text="Success!", text_color="green")
         messagebox.showinfo("Success", msg)
 
     def finish_error(self, err, btn):
         btn.configure(state="normal")
+        self.stop_button.grid_forget()
         self.status_label.configure(text="Error occurred", text_color="red")
         messagebox.showerror("Error", f"An error occurred: {err}")
+
+    def finish_stopped(self, btn):
+        btn.configure(state="normal")
+        self.stop_button.grid_forget()
+        self.status_label.configure(text="Stopped", text_color="red")
+        messagebox.showwarning("Stopped", "Process was stopped by user.")

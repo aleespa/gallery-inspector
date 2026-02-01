@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, List, Optional, Dict
@@ -96,11 +97,13 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
             } | {field: image_info.get(field) for field in fields_list}
 
 
-def generate_images_table(path: Path) -> pd.DataFrame:
+def generate_images_table(path: Path, stop_event: Optional[threading.Event] = None) -> pd.DataFrame:
     all_files = []
     files_to_process = []
 
     for dirpath, dir_names, filenames in os.walk(path, topdown=False):
+        if stop_event and stop_event.is_set():
+            return pd.DataFrame()
         logger.info(f'{dirpath} analyzed')
         for f in filenames:
             full_path = os.path.join(dirpath, f)
@@ -269,10 +272,14 @@ def _process_single_file(
 def generated_directory(
         input_path: Path,
         output: Path,
-        options: Options
+        options: Options,
+        stop_event: Optional[threading.Event] = None
 ) -> None:
     logger.info(f"Processing {input_path} -> {output}")
     for file in input_path.rglob('*'):
+        if stop_event and stop_event.is_set():
+            logger.warning("Organization stopped by user.")
+            return
         if file.is_dir():
             continue
         _process_single_file(file, output, options)
@@ -281,9 +288,13 @@ def generated_directory(
 def generated_directory_from_list(
         files: List[Path],
         output: Path,
-        options: Options
+        options: Options,
+        stop_event: Optional[threading.Event] = None
 ) -> None:
     for file in files:
+        if stop_event and stop_event.is_set():
+            logger.warning("Organization from list stopped by user.")
+            return
         if file.is_dir():
             continue
         _process_single_file(file, output, options)
