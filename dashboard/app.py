@@ -7,12 +7,8 @@ sys.path.append(str(ROOT))
 
 import streamlit as st
 import pandas as pd
-from gallery_inspector.generate import generate_images_table, generated_directory, generated_directory_from_list
+from gallery_inspector.generate import generated_directory, generated_directory_from_list
 from gallery_inspector.figures import plot_interactive_timeline, plot_sunburst, plot_scatter, plot_file_types, plot_size_distribution
-
-@st.cache_data
-def cached_generate_images_table(path: Path) -> pd.DataFrame:
-    return generate_images_table(path)
 
 st.set_page_config(page_title="Gallery Inspector", layout="wide")
 
@@ -20,23 +16,19 @@ st.title("Gallery Inspector Dashboard")
 
 # Sidebar
 st.sidebar.header("Configuration")
-source_dir = st.sidebar.text_input("Source Directory", value="")
-analyze_btn = st.sidebar.button("Analyze")
-if st.sidebar.button("Clear Cache"):
-    st.cache_data.clear()
+excel_file = st.sidebar.file_uploader("Select Excel Workbook", type=["xlsx"])
 
-if analyze_btn and source_dir:
-    path = Path(source_dir)
-    if not path.exists() or not path.is_dir():
-        st.error("Invalid directory path.")
-    else:
-        with st.spinner("Analyzing directory..."):
-            try:
-                df = cached_generate_images_table(path)
-                st.session_state['df'] = df
-                st.success("Analysis complete!")
-            except Exception as e:
-                st.error(f"Error during analysis: {e}")
+if excel_file:
+    with st.spinner("Loading data..."):
+        try:
+            df = pd.read_excel(excel_file)
+            # Convert date columns back to datetime objects if they were loaded as strings
+            if 'DateTimeOriginal' in df.columns:
+                df['DateTimeOriginal'] = pd.to_datetime(df['DateTimeOriginal'])
+            st.session_state['df'] = df
+            st.success("Data loaded successfully!")
+        except Exception as e:
+            st.error(f"Error loading Excel file: {e}")
 
 if 'df' in st.session_state:
     df = st.session_state['df']
