@@ -1,3 +1,4 @@
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
@@ -22,7 +23,19 @@ class GalleryInspectorUI(ctk.CTk):
         self.title("Gallery Inspector UI")
         self.geometry("1200x700")
 
-        logger.add("app_log.log", rotation="10 MB", level="INFO")
+        # Determine the application directory
+        if getattr(sys, 'frozen', False):
+            # If the application is run as a bundle (compiled with PyInstaller)
+            self.app_dir = Path(sys.executable).parent
+        else:
+            # If the application is run as a script
+            self.app_dir = Path(__file__).resolve().parents[1]
+
+        self.log_dir = self.app_dir / "logs"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_file = self.log_dir / "app_log.log"
+
+        logger.add(str(self.log_file), rotation="10 MB", level="INFO")
         # Add a sink to redirect loguru logs to the UI log box
         logger.add(self._log_sink, level="INFO")
 
@@ -86,9 +99,9 @@ class GalleryInspectorUI(ctk.CTk):
         # Stop Button (hidden by default, shown when running)
         self.stop_button = ctk.CTkButton(
             self.left_frame, 
-            text="STOP EXECUTION", 
-            fg_color="red", 
-            hover_color="darkred", 
+            text="Stop",
+            fg_color="#ff4a4c",
+            hover_color="#933032",
             command=self.stop_process
         )
         self.stop_event = threading.Event()

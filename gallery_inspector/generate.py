@@ -266,6 +266,7 @@ def _process_single_file(
                 destination = target_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
 
+    logger.info(f"Copying {file} -> {destination}")
     shutil.copy2(file, destination)
 
 

@@ -21,3 +21,8 @@ dependencies = [
     "customtkinter==5.2.2",
     "pandas-stubs~=2.2.3",
 ]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.18.0",
+]
