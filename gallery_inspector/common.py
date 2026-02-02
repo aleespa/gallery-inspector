@@ -8,7 +8,7 @@ from loguru import logger
 
 def clean_excel_unsafe(val):
     if isinstance(val, str):
-        return re.sub(r'[\x00-\x1F\x7F-\x9F]', '', val)
+        return re.sub(r"[\x00-\x1F\x7F-\x9F]", "", val)
     return val
 
 
@@ -20,12 +20,15 @@ def rational_to_float(r):
 
 
 def compare_directories(
-        path_a: Path,
-        path_b: Path
+    path_a: Path, path_b: Path
 ) -> Tuple[List[Path], List[Path], List[Path]]:
     # Create mappings: relative path -> full path
-    files_a = {file.relative_to(path_a): file for file in path_a.rglob("*") if file.is_file()}
-    files_b = {file.relative_to(path_b): file for file in path_b.rglob("*") if file.is_file()}
+    files_a = {
+        file.relative_to(path_a): file for file in path_a.rglob("*") if file.is_file()
+    }
+    files_b = {
+        file.relative_to(path_b): file for file in path_b.rglob("*") if file.is_file()
+    }
 
     # Determine common and unique relative paths
     common_keys = files_a.keys() & files_b.keys()

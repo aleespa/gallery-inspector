@@ -7,14 +7,17 @@ from PIL.ExifTags import TAGS
 from tqdm import tqdm
 
 
-def select_from_filter(
-        path: Path,
-        **kwargs: Union[str, int, List[Any]]
-) -> List[Path]:
+def select_from_filter(path: Path, **kwargs: Union[str, int, List[Any]]) -> List[Path]:
     filter_files = []
     fields_list = [
-        'Model', 'LensModel', 'ISOSpeedRatings', 'FNumber',
-        'ExposureTime', 'FocalLength', 'DateTime', 'DateTimeOriginal'
+        "Model",
+        "LensModel",
+        "ISOSpeedRatings",
+        "FNumber",
+        "ExposureTime",
+        "FocalLength",
+        "DateTime",
+        "DateTimeOriginal",
     ]
 
     def matches_filters(image_info: Dict[str, Any]) -> bool:
@@ -45,7 +48,7 @@ def select_from_filter(
             continue
 
         _, ext = os.path.splitext(full_path)
-        ext = ext.lower().lstrip('.') or 'none'
+        ext = ext.lower().lstrip(".") or "none"
         image_info = {}
 
         if ext.upper() == "JPG":

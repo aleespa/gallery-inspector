@@ -8,7 +8,7 @@ from loguru import logger
 def fix_exif_dates(folder_path):
     logger.info(f"Fixing EXIF dates in {folder_path}")
     for filename in os.listdir(folder_path):
-        if filename.lower().endswith(('.jpg', '.jpeg')):
+        if filename.lower().endswith((".jpg", ".jpeg")):
             file_path = os.path.join(folder_path, filename)
             try:
                 exif_dict = piexif.load(file_path)
@@ -17,7 +17,10 @@ def fix_exif_dates(folder_path):
                 # Date tags to check
                 date_tags = {
                     "0th": [piexif.ImageIFD.DateTime],
-                    "Exif": [piexif.ExifIFD.DateTimeOriginal, piexif.ExifIFD.DateTimeDigitized]
+                    "Exif": [
+                        piexif.ExifIFD.DateTimeOriginal,
+                        piexif.ExifIFD.DateTimeDigitized,
+                    ],
                 }
 
                 for ifd, tags in date_tags.items():
@@ -25,9 +28,13 @@ def fix_exif_dates(folder_path):
                         if tag in exif_dict[ifd]:
                             old_date = exif_dict[ifd][tag].decode()
                             if old_date[5:7] == "07":  # If month is July
-                                new_date = old_date[:5] + "06" + old_date[7:]  # Change to June
+                                new_date = (
+                                    old_date[:5] + "06" + old_date[7:]
+                                )  # Change to June
                                 exif_dict[ifd][tag] = new_date.encode()
-                                logger.info(f"{filename}: Tag {tag} changed from {old_date} to {new_date}")
+                                logger.info(
+                                    f"{filename}: Tag {tag} changed from {old_date} to {new_date}"
+                                )
                                 modified = True
 
                 if modified:

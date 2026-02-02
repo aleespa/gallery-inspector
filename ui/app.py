@@ -1,29 +1,38 @@
 import sys
 import tkinter as tk
+
 # Mock tix for Python 3.13+ compatibility with tkinterdnd2
-if not hasattr(tk, 'tix'):
+if not hasattr(tk, "tix"):
+
     class DummyTix:
         Tk = tk.Tk
-    sys.modules['tkinter.tix'] = DummyTix
+
+    sys.modules["tkinter.tix"] = DummyTix
     tk.tix = DummyTix
 
-from tkinter import filedialog, messagebox
-import customtkinter as ctk
-from pathlib import Path
-from loguru import logger
 import threading
+from pathlib import Path
+from tkinter import filedialog, messagebox
 
+import customtkinter as ctk
+from loguru import logger
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from gallery_inspector.convertor import cr2_to_jpg
 from gallery_inspector.export import export_images_table
-from gallery_inspector.generate import generate_images_table, generated_directory, Options
+from gallery_inspector.generate import (
+    Options,
+    generate_images_table,
+    generated_directory,
+)
+
+from .components import MultiPathSelector, PathSelector
 from .tabs import AnalysisTab, ConvertTab, OrganizeTab
-from .components import PathSelector, MultiPathSelector
 
 # Set appearance mode and color theme
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
+
 
 class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
@@ -34,7 +43,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         self.geometry("1200x700")
 
         # Determine the application directory
-        if getattr(sys, 'frozen', False):
+        if getattr(sys, "frozen", False):
             # If the application is run as a bundle (compiled with PyInstaller)
             self.app_dir = Path(sys.executable).parent
         else:
@@ -50,23 +59,27 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         logger.add(self._log_sink, level="INFO")
 
         # Configure grid layout
-        self.grid_columnconfigure(0, weight=1) # Left column (Selectors)
-        self.grid_columnconfigure(1, weight=2) # Right column (Tabs)
-        self.grid_rowconfigure(0, weight=1)    # Main content
-        self.grid_rowconfigure(2, weight=0)    # Log box (collapsible)
+        self.grid_columnconfigure(0, weight=1)  # Left column (Selectors)
+        self.grid_columnconfigure(1, weight=2)  # Right column (Tabs)
+        self.grid_rowconfigure(0, weight=1)  # Main content
+        self.grid_rowconfigure(2, weight=0)  # Log box (collapsible)
 
         # Left Column: Selectors
         self.left_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.left_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         self.left_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(self.left_frame, text="Project Paths", font=("Arial", 18, "bold")).grid(row=0, column=0, pady=(0, 20), sticky="w")
+        ctk.CTkLabel(
+            self.left_frame, text="Project Paths", font=("Arial", 18, "bold")
+        ).grid(row=0, column=0, pady=(0, 20), sticky="w")
 
         self.input_selector = MultiPathSelector(self.left_frame, "Input Directories:")
         self.input_selector.grid(row=1, column=0, sticky="ew", pady=10)
         self.input_selector.setup_dnd(self)
 
-        self.output_selector = PathSelector(self.left_frame, "Output Directory:", self.browse_directory)
+        self.output_selector = PathSelector(
+            self.left_frame, "Output Directory:", self.browse_directory
+        )
         self.output_selector.grid(row=2, column=0, sticky="ew", pady=10)
 
         # Right Column: Tabview
@@ -95,8 +108,12 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         self.log_header_frame.grid(row=0, column=0, sticky="ew")
         self.log_header_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(self.log_header_frame, text="Logs:").grid(row=0, column=0, sticky="w")
-        self.log_toggle_btn = ctk.CTkButton(self.log_header_frame, text="Show Logs", width=80, command=self.toggle_logs)
+        ctk.CTkLabel(self.log_header_frame, text="Logs:").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.log_toggle_btn = ctk.CTkButton(
+            self.log_header_frame, text="Show Logs", width=80, command=self.toggle_logs
+        )
         self.log_toggle_btn.grid(row=0, column=1, sticky="e")
 
         self.log_textbox = ctk.CTkTextbox(self.log_container, height=150)
@@ -115,11 +132,11 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # Stop Button (hidden by default, shown when running)
         self.stop_button = ctk.CTkButton(
-            self.left_frame, 
+            self.left_frame,
             text="Stop",
             fg_color="#ff4a4c",
             hover_color="#933032",
-            command=self.stop_process
+            command=self.stop_process,
         )
         self.stop_event = threading.Event()
 
@@ -171,36 +188,45 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             btn = self.analysis_view.run_button
         elif func == "convert":
             btn = self.convert_view.run_button
-        else: # create
+        else:  # create
             btn = self.organize_view.run_button
 
         input_paths = self.input_selector.get_paths()
         output_path = self.output_selector.get()
 
         if not input_paths or not output_path:
-            messagebox.showerror("Error", "Please select at least one input directory and an output directory.")
+            messagebox.showerror(
+                "Error",
+                "Please select at least one input directory and an output directory.",
+            )
             return
 
         btn.configure(state="disabled")
         self.stop_event.clear()
         self.stop_button.grid(row=3, column=0, pady=20, sticky="ew")
         self.stop_button.configure(state="normal")
-        
+
         self.status_label.configure(text=f"Processing {func}...", text_color="orange")
         self.progress_bar.set(0)
-        self.progress_bar.grid() # Show progress bar
+        self.progress_bar.grid()  # Show progress bar
         logger.info(f"START: {func.capitalize()} process initiated.")
 
         # Run in a separate thread to keep UI responsive
-        threading.Thread(target=self.execute, args=(func, input_paths, output_path, btn), daemon=True).start()
+        threading.Thread(
+            target=self.execute, args=(func, input_paths, output_path, btn), daemon=True
+        ).start()
 
     def execute(self, func, input_paths, output_path, btn):
         try:
             input_ps = [Path(p) for p in input_paths]
             output_p = Path(output_path)
-            
+
             if func == "analysis":
-                df = generate_images_table(input_ps, stop_event=self.stop_event, progress_callback=self.update_progress)
+                df = generate_images_table(
+                    input_ps,
+                    stop_event=self.stop_event,
+                    progress_callback=self.update_progress,
+                )
                 if self.stop_event.is_set():
                     logger.warning("Analysis cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
@@ -208,7 +234,12 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                 export_images_table(df, output_p / "images_table.xlsx")
                 msg = f"Analysis complete. Results saved to {output_p / 'images_table.xlsx'}"
             elif func == "convert":
-                cr2_to_jpg(input_ps, output_p, stop_event=self.stop_event, progress_callback=self.update_progress)
+                cr2_to_jpg(
+                    input_ps,
+                    output_p,
+                    stop_event=self.stop_event,
+                    progress_callback=self.update_progress,
+                )
                 if self.stop_event.is_set():
                     logger.warning("Conversion cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
@@ -217,18 +248,24 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             elif func == "create":
                 options_dict = self.organize_view.get_options()
                 options = Options(**options_dict)
-                generated_directory(input_ps, output_p, options, stop_event=self.stop_event, progress_callback=self.update_progress)
+                generated_directory(
+                    input_ps,
+                    output_p,
+                    options,
+                    stop_event=self.stop_event,
+                    progress_callback=self.update_progress,
+                )
                 if self.stop_event.is_set():
                     logger.warning("Organization cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
                 msg = f"Organization complete. Files organized in {output_p}"
-            
+
             logger.info(msg)
             self.after(0, lambda: self.finish_success(msg, btn))
         except Exception as e:
             if self.stop_event.is_set():
-                 self.after(0, lambda: self.finish_stopped(btn))
+                self.after(0, lambda: self.finish_stopped(btn))
             else:
                 logger.exception(f"Unexpected error: {e}")
                 self.after(0, lambda: self.finish_error(str(e), btn))
