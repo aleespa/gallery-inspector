@@ -6,8 +6,12 @@ import rawpy
 import imageio
 
 
+from loguru import logger
+
+
 def cr2_to_jpg(input_dirs: List[str | Path], output_dir: str | Path, stop_event: Optional[threading.Event] = None, progress_callback: Optional[Callable[[float], None]] = None):
     os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Starting CR2 to JPG conversion in {output_dir}")
 
     files_to_process = []
     for input_dir in input_dirs:
@@ -30,7 +34,7 @@ def cr2_to_jpg(input_dirs: List[str | Path], output_dir: str | Path, stop_event:
         with rawpy.imread(input_path) as raw:
             rgb = raw.postprocess()
         imageio.imwrite(output_path, rgb)
-        print(f"Converted: {filename} -> {name}.jpg")
+        logger.debug(f"Converted: {filename} -> {name}.jpg")
         
         if progress_callback:
             progress_callback((i + 1) / total_files)

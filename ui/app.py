@@ -45,7 +45,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = self.log_dir / "app_log.log"
 
-        logger.add(str(self.log_file), rotation="10 MB", level="INFO")
+        logger.add(str(self.log_file), rotation="10 MB", level="DEBUG")
         # Add a sink to redirect loguru logs to the UI log box
         logger.add(self._log_sink, level="INFO")
 
@@ -132,8 +132,11 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _log_sink(self, message):
         # loguru messages can be serialized or objects, we want the formatted string
-        msg = message.record["level"].name + ": " + message.record["message"]
-        self.after(0, lambda: self.log_message(msg))
+        record = message.record
+        level = record["level"].name
+        msg = record["message"]
+        formatted_msg = f"[{level}] {msg}"
+        self.after(0, lambda: self.log_message(formatted_msg))
 
     def toggle_logs(self):
         if self.log_visible:
@@ -158,6 +161,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         if directory:
             entry.delete(0, tk.END)
             entry.insert(0, directory)
+            logger.debug(f"Selected directory: {directory}")
 
     def update_progress(self, value):
         self.after(0, lambda: self.progress_bar.set(value))
@@ -185,7 +189,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         self.status_label.configure(text=f"Processing {func}...", text_color="orange")
         self.progress_bar.set(0)
         self.progress_bar.grid() # Show progress bar
-        logger.info(f"START: Processing {func}...")
+        logger.info(f"START: {func.capitalize()} process initiated.")
 
         # Run in a separate thread to keep UI responsive
         threading.Thread(target=self.execute, args=(func, input_paths, output_path, btn), daemon=True).start()
@@ -198,27 +202,27 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             if func == "analysis":
                 df = generate_images_table(input_ps, stop_event=self.stop_event, progress_callback=self.update_progress)
                 if self.stop_event.is_set():
-                    logger.warning("Analysis stopped.")
+                    logger.warning("Analysis cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
                 export_images_table(df, output_p / "images_table.xlsx")
-                msg = f"Analysis complete! Results saved to {output_p / 'images_table.xlsx'}"
+                msg = f"Analysis complete. Results saved to {output_p / 'images_table.xlsx'}"
             elif func == "convert":
                 cr2_to_jpg(input_ps, output_p, stop_event=self.stop_event, progress_callback=self.update_progress)
                 if self.stop_event.is_set():
-                    logger.warning("Conversion stopped.")
+                    logger.warning("Conversion cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
-                msg = f"Conversion complete! JPGs saved to {output_p}"
+                msg = f"Conversion complete. JPGs saved to {output_p}"
             elif func == "create":
                 options_dict = self.organize_view.get_options()
                 options = Options(**options_dict)
                 generated_directory(input_ps, output_p, options, stop_event=self.stop_event, progress_callback=self.update_progress)
                 if self.stop_event.is_set():
-                    logger.warning("Organization stopped.")
+                    logger.warning("Organization cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
-                msg = f"Organization complete! Files organized in {output_p}"
+                msg = f"Organization complete. Files organized in {output_p}"
             
             logger.info(msg)
             self.after(0, lambda: self.finish_success(msg, btn))
@@ -226,7 +230,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             if self.stop_event.is_set():
                  self.after(0, lambda: self.finish_stopped(btn))
             else:
-                logger.error(f"Error: {e}")
+                logger.exception(f"Unexpected error: {e}")
                 self.after(0, lambda: self.finish_error(str(e), btn))
 
     def finish_success(self, msg, btn):

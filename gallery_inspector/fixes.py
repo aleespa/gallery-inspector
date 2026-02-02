@@ -2,7 +2,11 @@ import os
 import piexif
 
 
+from loguru import logger
+
+
 def fix_exif_dates(folder_path):
+    logger.info(f"Fixing EXIF dates in {folder_path}")
     for filename in os.listdir(folder_path):
         if filename.lower().endswith(('.jpg', '.jpeg')):
             file_path = os.path.join(folder_path, filename)
@@ -23,7 +27,7 @@ def fix_exif_dates(folder_path):
                             if old_date[5:7] == "07":  # If month is July
                                 new_date = old_date[:5] + "06" + old_date[7:]  # Change to June
                                 exif_dict[ifd][tag] = new_date.encode()
-                                print(f"{filename}: Tag {tag} changed from {old_date} to {new_date}")
+                                logger.info(f"{filename}: Tag {tag} changed from {old_date} to {new_date}")
                                 modified = True
 
                 if modified:
@@ -31,7 +35,7 @@ def fix_exif_dates(folder_path):
                     piexif.insert(exif_bytes, file_path)
 
             except Exception as e:
-                print(f"Error processing {filename}: {e}")
+                logger.error(f"Error processing {filename}: {e}")
 
 
 if __name__ == "__main__":

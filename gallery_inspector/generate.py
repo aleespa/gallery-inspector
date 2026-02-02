@@ -98,22 +98,26 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
 
 
 def generate_images_table(paths: List[Path], stop_event: Optional[threading.Event] = None, progress_callback: Optional[Callable[[float], None]] = None) -> pd.DataFrame:
+    logger.info(f"Starting directory analysis for: {[str(p) for p in paths]}")
     all_files = []
     files_to_process = []
 
     for path in paths:
         for dirpath, dir_names, filenames in os.walk(path, topdown=False):
             if stop_event and stop_event.is_set():
+                logger.warning("Directory analysis stopped by user during walk.")
                 return pd.DataFrame()
-            logger.info(f'{dirpath} analyzed')
+            logger.debug(f'Analyzing directory: {dirpath}')
             for f in filenames:
                 full_path = os.path.join(dirpath, f)
                 files_to_process.append((full_path, dirpath, f))
             
     total_files = len(files_to_process)
     if total_files == 0:
+        logger.warning("No files found to analyze.")
         return pd.DataFrame()
 
+    logger.info(f"Extracting metadata from {total_files} files...")
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(_analyze_single_file, fp, dp, fn) for fp, dp, fn in files_to_process]
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -295,8 +299,10 @@ def generated_directory(
     
     total_files = len(all_files)
     if total_files == 0:
+        logger.warning("No files found to organize.")
         return
 
+    logger.info(f"Organizing {total_files} files into {output}...")
     for i, file in enumerate(all_files):
         if stop_event and stop_event.is_set():
             logger.warning("Organization stopped by user.")
