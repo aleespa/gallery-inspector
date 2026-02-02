@@ -4,7 +4,7 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, List, Optional, Dict
+from typing import Literal, List, Optional, Dict, Callable
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -97,7 +97,7 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
             } | {field: image_info.get(field) for field in fields_list}
 
 
-def generate_images_table(paths: List[Path], stop_event: Optional[threading.Event] = None) -> pd.DataFrame:
+def generate_images_table(paths: List[Path], stop_event: Optional[threading.Event] = None, progress_callback: Optional[Callable[[float], None]] = None) -> pd.DataFrame:
     all_files = []
     files_to_process = []
 
@@ -110,12 +110,21 @@ def generate_images_table(paths: List[Path], stop_event: Optional[threading.Even
                 full_path = os.path.join(dirpath, f)
                 files_to_process.append((full_path, dirpath, f))
             
+    total_files = len(files_to_process)
+    if total_files == 0:
+        return pd.DataFrame()
+
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(_analyze_single_file, fp, dp, fn) for fp, dp, fn in files_to_process]
-        for future in concurrent.futures.as_completed(futures):
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            if stop_event and stop_event.is_set():
+                executor.shutdown(wait=False, cancel_futures=True)
+                return pd.DataFrame()
             result = future.result()
             if result:
                 all_files.append(result)
+            if progress_callback:
+                progress_callback((i + 1) / total_files)
 
     df_all = pd.DataFrame(all_files)
     fields_list = [
@@ -275,31 +284,46 @@ def generated_directory(
         input_paths: List[Path],
         output: Path,
         options: Options,
-        stop_event: Optional[threading.Event] = None
+        stop_event: Optional[threading.Event] = None,
+        progress_callback: Optional[Callable[[float], None]] = None
 ) -> None:
+    all_files = []
     for input_path in input_paths:
-        logger.info(f"Processing {input_path} -> {output}")
         for file in input_path.rglob('*'):
-            if stop_event and stop_event.is_set():
-                logger.warning("Organization stopped by user.")
-                return
-            if file.is_dir():
-                continue
-            _process_single_file(file, output, options)
+            if not file.is_dir():
+                all_files.append(file)
+    
+    total_files = len(all_files)
+    if total_files == 0:
+        return
+
+    for i, file in enumerate(all_files):
+        if stop_event and stop_event.is_set():
+            logger.warning("Organization stopped by user.")
+            return
+        _process_single_file(file, output, options)
+        if progress_callback:
+            progress_callback((i + 1) / total_files)
 
 
 def generated_directory_from_list(
         files: List[Path],
         output: Path,
         options: Options,
-        stop_event: Optional[threading.Event] = None
+        stop_event: Optional[threading.Event] = None,
+        progress_callback: Optional[Callable[[float], None]] = None
 ) -> None:
-    for file in files:
+    all_files = [f for f in files if not f.is_dir()]
+    total_files = len(all_files)
+    if total_files == 0:
+        return
+
+    for i, file in enumerate(all_files):
         if stop_event and stop_event.is_set():
             logger.warning("Organization from list stopped by user.")
             return
-        if file.is_dir():
-            continue
         _process_single_file(file, output, options)
+        if progress_callback:
+            progress_callback((i + 1) / total_files)
 
 

@@ -105,7 +105,13 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # Status Label (bottom)
         self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
-        self.status_label.grid(row=2, column=0, columnspan=2, pady=(0, 10))
+        self.status_label.grid(row=2, column=0, columnspan=2, pady=(0, 5))
+
+        # Progress Bar
+        self.progress_bar = ctk.CTkProgressBar(self, width=400)
+        self.progress_bar.grid(row=3, column=0, columnspan=2, pady=(0, 10))
+        self.progress_bar.set(0)
+        self.progress_bar.grid_remove()  # Hide initially
 
         # Stop Button (hidden by default, shown when running)
         self.stop_button = ctk.CTkButton(
@@ -153,6 +159,9 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             entry.delete(0, tk.END)
             entry.insert(0, directory)
 
+    def update_progress(self, value):
+        self.after(0, lambda: self.progress_bar.set(value))
+
     def run_process(self, func):
         if func == "analysis":
             btn = self.analysis_view.run_button
@@ -174,6 +183,8 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         self.stop_button.configure(state="normal")
         
         self.status_label.configure(text=f"Processing {func}...", text_color="orange")
+        self.progress_bar.set(0)
+        self.progress_bar.grid() # Show progress bar
         logger.info(f"START: Processing {func}...")
 
         # Run in a separate thread to keep UI responsive
@@ -185,7 +196,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             output_p = Path(output_path)
             
             if func == "analysis":
-                df = generate_images_table(input_ps, stop_event=self.stop_event)
+                df = generate_images_table(input_ps, stop_event=self.stop_event, progress_callback=self.update_progress)
                 if self.stop_event.is_set():
                     logger.warning("Analysis stopped.")
                     self.after(0, lambda: self.finish_stopped(btn))
@@ -193,7 +204,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                 export_images_table(df, output_p / "images_table.xlsx")
                 msg = f"Analysis complete! Results saved to {output_p / 'images_table.xlsx'}"
             elif func == "convert":
-                cr2_to_jpg(input_ps, output_p, stop_event=self.stop_event)
+                cr2_to_jpg(input_ps, output_p, stop_event=self.stop_event, progress_callback=self.update_progress)
                 if self.stop_event.is_set():
                     logger.warning("Conversion stopped.")
                     self.after(0, lambda: self.finish_stopped(btn))
@@ -202,7 +213,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             elif func == "create":
                 options_dict = self.organize_view.get_options()
                 options = Options(**options_dict)
-                generated_directory(input_ps, output_p, options, stop_event=self.stop_event)
+                generated_directory(input_ps, output_p, options, stop_event=self.stop_event, progress_callback=self.update_progress)
                 if self.stop_event.is_set():
                     logger.warning("Organization stopped.")
                     self.after(0, lambda: self.finish_stopped(btn))
@@ -221,17 +232,20 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
     def finish_success(self, msg, btn):
         btn.configure(state="normal")
         self.stop_button.grid_forget()
+        self.progress_bar.grid_remove()
         self.status_label.configure(text="Success!", text_color="green")
         messagebox.showinfo("Success", msg)
 
     def finish_error(self, err, btn):
         btn.configure(state="normal")
         self.stop_button.grid_forget()
+        self.progress_bar.grid_remove()
         self.status_label.configure(text="Error occurred", text_color="red")
         messagebox.showerror("Error", f"An error occurred: {err}")
 
     def finish_stopped(self, btn):
         btn.configure(state="normal")
         self.stop_button.grid_forget()
+        self.progress_bar.grid_remove()
         self.status_label.configure(text="Stopped", text_color="red")
         messagebox.showwarning("Stopped", "Process was stopped by user.")
