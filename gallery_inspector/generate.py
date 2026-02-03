@@ -265,7 +265,7 @@ def _get_video_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
         return None
 
 
-def _process_single_file(file: Path, output: Path, options: Options) -> None:
+def _process_single_file(file: Path, output: Path, options: Options) -> Literal["copied", "skipped", "error"]:
     image_extensions = {".jpg", ".jpeg", ".png", ".cr2", ".nef", ".tiff", ".arw"}
     video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
@@ -306,25 +306,30 @@ def _process_single_file(file: Path, output: Path, options: Options) -> None:
     except Exception as e:
         target_dir = target_dir / "No Info"
         if options.verbose:
-            logger.warning(f"Error processing {file}: {e}")
+            logger.warning(f"Error extracting metadata from {file}: {e}")
 
-    target_dir.mkdir(parents=True, exist_ok=True)
-    destination = target_dir / file.name
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        destination = target_dir / file.name
 
-    if options.on_exist == "skip" and destination.exists():
-        if options.verbose:
-            logger.info(f"Skipping {file} as it already exists at {destination}")
-        return
-    elif options.on_exist == "rename":
-        if destination.exists():
-            stem, suffix = file.stem, file.suffix
-            counter = 1
-            while destination.exists():
-                destination = target_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
+        if options.on_exist == "skip" and destination.exists():
+            if options.verbose:
+                logger.info(f"Skipping {file} as it already exists at {destination}")
+            return "skipped"
+        elif options.on_exist == "rename":
+            if destination.exists():
+                stem, suffix = file.stem, file.suffix
+                counter = 1
+                while destination.exists():
+                    destination = target_dir / f"{stem}_{counter}{suffix}"
+                    counter += 1
 
-    logger.info(f"Copying {file} -> {destination}")
-    shutil.copy2(file, destination)
+        logger.info(f"Copying {file} -> {destination}")
+        shutil.copy2(file, destination)
+        return "copied"
+    except Exception as e:
+        logger.error(f"Failed to copy {file} to {target_dir}: {e}")
+        return "error"
 
 
 def generated_directory(
@@ -346,13 +351,28 @@ def generated_directory(
         return
 
     logger.info(f"Organizing {total_files} files into {output}...")
+    successful_copies = 0
+    excluded_files = []
+
     for i, file in enumerate(all_files):
         if stop_event and stop_event.is_set():
             logger.warning("Organization stopped by user.")
-            return
-        _process_single_file(file, output, options)
+            break
+        
+        status = _process_single_file(file, output, options)
+        if status == "copied":
+            successful_copies += 1
+        else:
+            excluded_files.append(file)
+            if status == "error":
+                logger.warning(f"File not copied to target directory due to error: {file}")
+            elif status == "skipped":
+                logger.info(f"File skipped (already exists): {file}")
+
         if progress_callback:
             progress_callback((i + 1) / total_files)
+
+    _final_report(total_files, successful_copies, excluded_files)
 
 
 def generated_directory_from_list(
@@ -367,10 +387,52 @@ def generated_directory_from_list(
     if total_files == 0:
         return
 
+    successful_copies = 0
+    excluded_files = []
+
     for i, file in enumerate(all_files):
         if stop_event and stop_event.is_set():
             logger.warning("Organization from list stopped by user.")
-            return
-        _process_single_file(file, output, options)
+            break
+        
+        status = _process_single_file(file, output, options)
+        if status == "copied":
+            successful_copies += 1
+        else:
+            excluded_files.append(file)
+            if status == "error":
+                logger.warning(f"File not copied to target directory due to error: {file}")
+            elif status == "skipped":
+                logger.info(f"File skipped (already exists): {file}")
+
         if progress_callback:
             progress_callback((i + 1) / total_files)
+
+    _final_report(total_files, successful_copies, excluded_files)
+
+
+def _final_report(total: int, copied: int, excluded: List[Path]) -> None:
+    num_excluded = len(excluded)
+    logger.info("--- Organization Report ---")
+    logger.info(f"Files in original paths: {total}")
+    logger.info(f"Files copied successfully: {copied}")
+    logger.info(f"Files excluded: {num_excluded}")
+    logger.info("---------------------------")
+
+    if excluded:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logs_dir = Path("logs")
+        logs_dir.mkdir(exist_ok=True)
+        error_log_path = logs_dir / f"error_{timestamp}.log"
+        
+        with open(error_log_path, "w", encoding="utf-8") as f:
+            f.write(f"Report Date: {datetime.now().isoformat()}\n")
+            f.write(f"Total files: {total}\n")
+            f.write(f"Copied successfully: {copied}\n")
+            f.write(f"Excluded files: {num_excluded}\n")
+            f.write("-" * 30 + "\n")
+            f.write("Excluded Files List:\n")
+            for file in excluded:
+                f.write(f"{file}\n")
+        
+        logger.info(f"Error log generated at: {error_log_path}")
