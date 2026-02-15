@@ -53,23 +53,45 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
 
     media_type = "other"
 
-    if ext.lower() in {".jpg", ".jpeg"}:
+    if ext.lower() in {".jpg", ".jpeg", ".cr3"}:
         media_type = "image"
         try:
+            # For CR3 and others, PIL might fail to open or get exif
             image = Image.open(full_path)
             exif_data = image._getexif()
 
-            exif = {}
             if exif_data:
-                for tag_id, value in exif_data.items():
-                    tag = TAGS.get(tag_id, tag_id)
-                    exif[tag] = value
                 tag_ids = {v: k for k, v in TAGS.items()}
-
                 for field in fields_list:
-                    image_info[field] = exif_data.get(tag_ids.get(field))
-        except (AttributeError, UnidentifiedImageError):
+                    val = exif_data.get(tag_ids.get(field))
+                    if val:
+                        image_info[field] = val
+        except Exception:
             pass
+
+        # Fallback for CR3 metadata using MediaInfo
+        if ext.lower() == ".cr3":
+            try:
+                mi = MediaInfo.parse(full_path)
+                for track in mi.tracks:
+                    if track.track_type == "General":
+                        if not image_info.get("DateTimeOriginal"):
+                            c_date = track.tagged_date or track.encoded_date
+                            if c_date:
+                                # Remove UTC if present
+                                c_date = c_date.replace(" UTC", "")
+                                m = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", c_date)
+                                if m:
+                                    dt_obj = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                                    image_info["DateTimeOriginal"] = dt_obj.strftime("%Y:%m:%d %H:%M:%S")
+                                    image_info["DateTime"] = dt_obj.strftime("%Y:%m:%d %H:%M:%S")
+                        if not image_info.get("Model"):
+                            image_info["Model"] = track.model
+                        if not image_info.get("LensModel"):
+                            image_info["LensModel"] = track.lens_model
+                        break
+            except Exception:
+                pass
 
     elif ext.lower() in video_extensions:
         media_type = "video"
@@ -209,35 +231,63 @@ def sanitize_folder_name(name: str) -> str | None:
 
 
 def _get_image_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
+    date = None
+    model = None
+    lens = None
     try:
-        img = Image.open(file)
-        exif_data = img._getexif()
-        img.close()
+        # Try PIL first
+        try:
+            img = Image.open(file)
+            exif_data = img._getexif()
+            img.close()
 
-        tag_ids = {v: k for k, v in TAGS.items()}
+            tag_ids = {v: k for k, v in TAGS.items()}
 
-        date = None
-        if exif_data:
-            date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
-            if date_str:
-                try:
-                    date_only = date_str.split(" ")[0]
-                    date = datetime.strptime(date_only, "%Y:%m:%d")
-                except (ValueError, IndexError):
-                    pass
+            if exif_data:
+                date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
+                if date_str:
+                    try:
+                        date_only = date_str.split(" ")[0]
+                        date = datetime.strptime(date_only, "%Y:%m:%d")
+                    except (ValueError, IndexError):
+                        pass
 
-        model = None
-        lens = None
-        if exif_data:
-            model = exif_data.get(tag_ids.get("Model"))
-            lens = exif_data.get(tag_ids.get("LensModel"))
+                model = exif_data.get(tag_ids.get("Model"))
+                lens = exif_data.get(tag_ids.get("LensModel"))
+        except Exception:
+            # PIL might fail to open or it might not have exif
+            pass
 
-        return {
-            "Year": f"{date.year:04d}" if date else None,
-            "Month": f"{date.month:02d}" if date else None,
-            "Model": sanitize_folder_name(model) if model else None,
-            "Lens": sanitize_folder_name(lens) if lens else None,
-        }
+        # If PIL failed to get critical info and it's a .cr3, try MediaInfo
+        if (not date or not model) and file.suffix.lower() == ".cr3":
+            try:
+                media_info = MediaInfo.parse(file)
+                for track in media_info.tracks:
+                    if track.track_type == "General":
+                        if not date:
+                            creation_date = track.tagged_date or track.encoded_date
+                            if creation_date:
+                                # Remove UTC if present
+                                creation_date = creation_date.replace(" UTC", "")
+                                match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
+                                if match:
+                                    date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                        if not model:
+                            model = track.model
+                        if not lens:
+                            lens = track.lens_model
+                        break
+            except Exception as e:
+                logger.debug(f"MediaInfo error for {file}: {e}")
+
+        if date or model or lens:
+            return {
+                "Year": f"{date.year:04d}" if date else None,
+                "Month": f"{date.month:02d}" if date else None,
+                "Model": sanitize_folder_name(model) if model else None,
+                "Lens": sanitize_folder_name(lens) if lens else None,
+            }
+        return None
     except Exception:
         return None
 
@@ -266,7 +316,7 @@ def _get_video_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
 
 
 def _process_single_file(file: Path, output: Path, options: Options) -> Literal["copied", "skipped", "error"]:
-    image_extensions = {".jpg", ".jpeg", ".png", ".cr2", ".nef", ".tiff", ".arw"}
+    image_extensions = {".jpg", ".jpeg", ".png", ".cr2", ".nef", ".tiff", ".arw", ".cr3"}
     video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
     suffix = file.suffix.lower()
