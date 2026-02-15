@@ -17,14 +17,39 @@ class BaseTab(ctk.CTkFrame):
             row=0, column=0, pady=10
         )
 
+        # Button container
+        self.button_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.button_frame.grid(row=3, column=0, pady=20)
+
         self.run_button = ctk.CTkButton(
-            self,
+            self.button_frame,
             text=button_text,
             command=self.on_run,
             fg_color="green",
             hover_color="darkgreen",
+            height=40,
+            width=150,
         )
-        self.run_button.grid(row=3, column=0, pady=20)
+        self.run_button.grid(row=0, column=0, padx=5)
+
+        self.pause_button = ctk.CTkButton(
+            self.button_frame,
+            text="⏸",
+            width=40,
+            height=40,
+            command=app.toggle_pause,
+            fg_color="#3b8ed0",
+            hover_color="#36719f",
+        )
+        self.stop_button = ctk.CTkButton(
+            self.button_frame,
+            text="⏹",
+            width=40,
+            height=40,
+            command=app.stop_process,
+            fg_color="#ff4a4c",
+            hover_color="#933032",
+        )
 
     def on_run(self):
         self.run_callback()

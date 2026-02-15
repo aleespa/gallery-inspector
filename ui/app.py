@@ -130,22 +130,39 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         self.progress_bar.set(0)
         self.progress_bar.grid_remove()  # Hide initially
 
-        # Stop Button (hidden by default, shown when running)
-        self.stop_button = ctk.CTkButton(
-            self.left_frame,
-            text="Stop",
-            fg_color="#ff4a4c",
-            hover_color="#933032",
-            command=self.stop_process,
-        )
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+
+    def get_current_tab(self):
+        tab_name = self.tabview.get()
+        if tab_name == "Analysis":
+            return self.analysis_view
+        elif tab_name == "Convert CR2":
+            return self.convert_view
+        else:
+            return self.organize_view
 
     def stop_process(self):
         if self.stop_event:
             self.stop_event.set()
             logger.warning("Stop requested by user...")
             self.status_label.configure(text="Stopping...", text_color="red")
-            self.stop_button.configure(state="disabled")
+            tab = self.get_current_tab()
+            tab.stop_button.configure(state="disabled")
+            tab.pause_button.configure(state="disabled")
+
+    def toggle_pause(self):
+        tab = self.get_current_tab()
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            tab.pause_button.configure(text="⏸")
+            self.status_label.configure(text="Resuming...", text_color="orange")
+            logger.info("Process resumed.")
+        else:
+            self.pause_event.set()
+            tab.pause_button.configure(text="▶")
+            self.status_label.configure(text="Paused", text_color="yellow")
+            logger.info("Process paused.")
 
     def _log_sink(self, message):
         # loguru messages can be serialized or objects, we want the formatted string
@@ -203,8 +220,13 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
 
         btn.configure(state="disabled")
         self.stop_event.clear()
-        self.stop_button.grid(row=3, column=0, pady=20, sticky="ew")
-        self.stop_button.configure(state="normal")
+        self.pause_event.clear()
+
+        tab = self.get_current_tab()
+        tab.pause_button.configure(text="⏸", state="normal")
+        tab.pause_button.grid(row=0, column=1, padx=5)
+        tab.stop_button.configure(state="normal")
+        tab.stop_button.grid(row=0, column=2, padx=5)
 
         self.status_label.configure(text=f"Processing {func}...", text_color="orange")
         self.progress_bar.set(0)
@@ -225,6 +247,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                 df = generate_images_table(
                     input_ps,
                     stop_event=self.stop_event,
+                    pause_event=self.pause_event,
                     progress_callback=self.update_progress,
                 )
                 if self.stop_event.is_set():
@@ -238,6 +261,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                     input_ps,
                     output_p,
                     stop_event=self.stop_event,
+                    pause_event=self.pause_event,
                     progress_callback=self.update_progress,
                 )
                 if self.stop_event.is_set():
@@ -253,6 +277,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                     output_p,
                     options,
                     stop_event=self.stop_event,
+                    pause_event=self.pause_event,
                     progress_callback=self.update_progress,
                 )
                 if self.stop_event.is_set():
@@ -272,21 +297,27 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def finish_success(self, msg, btn):
         btn.configure(state="normal")
-        self.stop_button.grid_forget()
+        tab = self.get_current_tab()
+        tab.stop_button.grid_forget()
+        tab.pause_button.grid_forget()
         self.progress_bar.grid_remove()
         self.status_label.configure(text="Success!", text_color="green")
         messagebox.showinfo("Success", msg)
 
     def finish_error(self, err, btn):
         btn.configure(state="normal")
-        self.stop_button.grid_forget()
+        tab = self.get_current_tab()
+        tab.stop_button.grid_forget()
+        tab.pause_button.grid_forget()
         self.progress_bar.grid_remove()
         self.status_label.configure(text="Error occurred", text_color="red")
         messagebox.showerror("Error", f"An error occurred: {err}")
 
     def finish_stopped(self, btn):
         btn.configure(state="normal")
-        self.stop_button.grid_forget()
+        tab = self.get_current_tab()
+        tab.stop_button.grid_forget()
+        tab.pause_button.grid_forget()
         self.progress_bar.grid_remove()
         self.status_label.configure(text="Stopped", text_color="red")
         messagebox.showwarning("Stopped", "Process was stopped by user.")

@@ -9,7 +9,7 @@ import imageio
 from loguru import logger
 
 
-def cr2_to_jpg(input_dirs: List[str | Path], output_dir: str | Path, stop_event: Optional[threading.Event] = None, progress_callback: Optional[Callable[[float], None]] = None):
+def cr2_to_jpg(input_dirs: List[str | Path], output_dir: str | Path, stop_event: Optional[threading.Event] = None, pause_event: Optional[threading.Event] = None, progress_callback: Optional[Callable[[float], None]] = None):
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Starting CR2 to JPG conversion in {output_dir}")
 
@@ -26,6 +26,15 @@ def cr2_to_jpg(input_dirs: List[str | Path], output_dir: str | Path, stop_event:
     for i, (input_dir, filename) in enumerate(files_to_process):
         if stop_event and stop_event.is_set():
             break
+        
+        if pause_event:
+            while pause_event.is_set():
+                if stop_event and stop_event.is_set():
+                    break
+                threading.Event().wait(0.1)
+            
+            if stop_event and stop_event.is_set():
+                break
         
         input_path = os.path.join(input_dir, filename)
         name, _ = os.path.splitext(filename)

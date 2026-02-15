@@ -134,6 +134,7 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
 def generate_images_table(
     paths: List[Path],
     stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> pd.DataFrame:
     logger.info(f"Starting directory analysis for: {[str(p) for p in paths]}")
@@ -145,6 +146,13 @@ def generate_images_table(
             if stop_event and stop_event.is_set():
                 logger.warning("Directory analysis stopped by user during walk.")
                 return pd.DataFrame()
+            
+            if pause_event:
+                while pause_event.is_set():
+                    if stop_event and stop_event.is_set():
+                        return pd.DataFrame()
+                    threading.Event().wait(0.1)
+
             logger.debug(f"Analyzing directory: {dirpath}")
             for f in filenames:
                 full_path = os.path.join(dirpath, f)
@@ -165,6 +173,14 @@ def generate_images_table(
             if stop_event and stop_event.is_set():
                 executor.shutdown(wait=False, cancel_futures=True)
                 return pd.DataFrame()
+            
+            if pause_event:
+                while pause_event.is_set():
+                    if stop_event and stop_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        return pd.DataFrame()
+                    threading.Event().wait(0.1)
+
             result = future.result()
             if result:
                 all_files.append(result)
@@ -387,6 +403,7 @@ def generated_directory(
     output: Path,
     options: Options,
     stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> None:
     all_files = []
@@ -408,6 +425,16 @@ def generated_directory(
         if stop_event and stop_event.is_set():
             logger.warning("Organization stopped by user.")
             break
+
+        if pause_event:
+            while pause_event.is_set():
+                if stop_event and stop_event.is_set():
+                    break
+                threading.Event().wait(0.1)
+            
+            if stop_event and stop_event.is_set():
+                logger.warning("Organization stopped by user during pause.")
+                break
         
         status = _process_single_file(file, output, options)
         if status == "copied":
@@ -430,6 +457,7 @@ def generated_directory_from_list(
     output: Path,
     options: Options,
     stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> None:
     all_files = [f for f in files if not f.is_dir()]
@@ -444,6 +472,16 @@ def generated_directory_from_list(
         if stop_event and stop_event.is_set():
             logger.warning("Organization from list stopped by user.")
             break
+        
+        if pause_event:
+            while pause_event.is_set():
+                if stop_event and stop_event.is_set():
+                    break
+                threading.Event().wait(0.1)
+            
+            if stop_event and stop_event.is_set():
+                logger.warning("Organization from list stopped by user during pause.")
+                break
         
         status = _process_single_file(file, output, options)
         if status == "copied":
