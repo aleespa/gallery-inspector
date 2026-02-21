@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Literal, Optional
-
+import concurrent.futures
 import pandas as pd
 from loguru import logger
 from PIL import Image, UnidentifiedImageError
@@ -25,8 +25,6 @@ class Options:
     verbose: bool = True
     on_exist: Literal["rename", "skip"] = "rename"
 
-
-import concurrent.futures
 
 
 def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]:
@@ -53,7 +51,7 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
 
     media_type = "other"
 
-    if ext.lower() in {".jpg", ".jpeg", ".cr3"}:
+    if ext.lower() in {".jpg", ".jpeg", ".cr3", ".cr2"}:
         media_type = "image"
         try:
             # For CR3 and others, PIL might fail to open or get exif
@@ -70,7 +68,7 @@ def _analyze_single_file(full_path: str, dirpath: str, f: str) -> Optional[Dict]
             pass
 
         # Fallback for CR3 metadata using MediaInfo
-        if ext.lower() == ".cr3":
+        if ext.lower() in {".cr2", ".cr3"}:
             try:
                 mi = MediaInfo.parse(full_path)
                 for track in mi.tracks:
@@ -275,7 +273,7 @@ def _get_image_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
             pass
 
         # If PIL failed to get critical info and it's a .cr3, try MediaInfo
-        if (not date or not model) and file.suffix.lower() == ".cr3":
+        if (not date or not model) and file.suffix.lower() in {".cr2", ".cr3"}:
             try:
                 media_info = MediaInfo.parse(file)
                 for track in media_info.tracks:

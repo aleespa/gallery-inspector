@@ -1,5 +1,6 @@
 import sys
 import tkinter as tk
+from datetime import datetime
 
 # Mock tix for Python 3.13+ compatibility with tkinterdnd2
 if not hasattr(tk, "tix"):
@@ -254,7 +255,8 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                     logger.warning("Analysis cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
-                export_images_table(df, output_p / "images_table.xlsx")
+                name_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                export_images_table(df, output_p / f"analysis_{name_date}.xlsx")
                 msg = f"Analysis complete. Results saved to {output_p / 'images_table.xlsx'}"
             elif func == "convert":
                 cr2_to_jpg(
