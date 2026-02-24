@@ -20,7 +20,7 @@ from loguru import logger
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from gallery_inspector.convertor import cr2_to_jpg
-from gallery_inspector.export import export_images_table
+from gallery_inspector.export import export_files_table
 from gallery_inspector.generate import (
     Options,
     generate_images_table,
@@ -245,7 +245,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             output_p = Path(output_path)
 
             if func == "analysis":
-                df = generate_images_table(
+                df_images, df_videos, df_others = generate_images_table(
                     input_ps,
                     stop_event=self.stop_event,
                     pause_event=self.pause_event,
@@ -256,8 +256,9 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
                 name_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                export_images_table(df, output_p / f"analysis_{name_date}.xlsx")
-                msg = f"Analysis complete. Results saved to {output_p / 'images_table.xlsx'}"
+                output_file = output_p / f"analysis_{name_date}.xlsx"
+                export_files_table(df_images, df_videos, df_others, output_file)
+                msg = f"Analysis complete. Results saved to {output_file}"
             elif func == "convert":
                 cr2_to_jpg(
                     input_ps,
