@@ -26,6 +26,10 @@ class TestGenerateTable(unittest.TestCase):
         # Check if expected files are in the dataframe
         filenames = images_df["name"].tolist()
         self.assertIn("test", filenames)
+
+        # Check for time_taken column
+        self.assertIn("time_taken", images_df.columns)
+        self.assertTrue(images_df["time_taken"].notna().any())
         
         # Check extensions
         extensions = [ext.lower() for ext in images_df["filetype"].tolist()]

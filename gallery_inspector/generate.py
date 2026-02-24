@@ -84,7 +84,14 @@ def analyze_jpeg(path: Path) -> Optional[Dict]:
         zeroth = exif_dict["0th"]
         exif = exif_dict["Exif"]
 
-        date_taken = _decode_if_bytes(exif.get(piexif.ExifIFD.DateTimeOriginal))
+        date_taken_full = _decode_if_bytes(exif.get(piexif.ExifIFD.DateTimeOriginal))
+        date_taken = None
+        time_taken = None
+        if date_taken_full and " " in date_taken_full:
+            date_taken, time_taken = date_taken_full.split(" ", 1)
+        elif date_taken_full:
+            date_taken = date_taken_full
+
         camera = _decode_if_bytes(zeroth.get(piexif.ImageIFD.Model))
         lens = _decode_if_bytes(exif.get(piexif.ExifIFD.LensModel))
         focal_length = _rational_to_float(exif.get(piexif.ExifIFD.FocalLength))
@@ -97,6 +104,7 @@ def analyze_jpeg(path: Path) -> Optional[Dict]:
             "filetype": filetype,
             "directory": directory,
             "date_taken": date_taken,
+            "time_taken": time_taken,
             "camera": camera,
             "lens": lens,
             "focal_length": focal_length,
@@ -123,13 +131,17 @@ def analyze_raw(path: Path) -> Optional[Dict]:
     size_bytes = path.stat().st_size
     size_mb = round(size_bytes / (1024 * 1024), 2)
 
-    camera = lens = date_taken = iso = shutter_speed = aperture = focal_length = None
+    camera = lens = date_taken = time_taken = iso = shutter_speed = aperture = focal_length = None
     width = height = None
     with open(path, "rb") as f:
         tags = exifread.process_file(f, details=False)
 
     if filetype in {".cr2"}:
-        date_taken = _decode_if_bytes(tags.get("EXIF DateTimeOriginal"))
+        date_taken_full = _decode_if_bytes(tags.get("EXIF DateTimeOriginal"))
+        if date_taken_full and " " in date_taken_full:
+            date_taken, time_taken = date_taken_full.split(" ", 1)
+        elif date_taken_full:
+            date_taken = date_taken_full
         camera = _decode_if_bytes(tags.get("Image Model"))
         lens = _decode_if_bytes(tags.get("EXIF LensModel"))
 
@@ -154,7 +166,19 @@ def analyze_raw(path: Path) -> Optional[Dict]:
                           or getattr(track, "writing_library", None)
                           or getattr(track, "encoded_library_name", None))
                 lens = getattr(track, "lens_model", None)
-                date_taken = getattr(track, "tagged_date", None) or getattr(track, "encoded_date", None)
+                date_taken_full = getattr(track, "tagged_date", None) or getattr(track, "encoded_date", None)
+                if date_taken_full:
+                    # MediaInfo dates often look like "2026-02-14 14:00:21" or "UTC 2026-02-14 14:00:21"
+                    # We want to normalize to "YYYY:MM:DD HH:MM:SS" if possible for date_taken
+                    # but for now let's just extract time.
+                    date_taken_clean = date_taken_full.replace("UTC", "").strip()
+                    if " " in date_taken_clean:
+                        date_taken, time_taken = date_taken_clean.split(" ", 1)
+                        # Normalize date from YYYY-MM-DD to YYYY:MM:DD if it was from MediaInfo
+                        date_taken = date_taken.replace("-", ":")
+                    else:
+                        date_taken = date_taken_clean.replace("-", ":")
+
                 iso = getattr(track, "ISO", None)
                 aperture = getattr(track, "FNumber", None)
                 shutter_speed = getattr(track, "ExposureTime", None)
@@ -185,7 +209,11 @@ def analyze_raw(path: Path) -> Optional[Dict]:
                             if not lens:
                                 lens = _decode_if_bytes(tags.get("EXIF LensModel") or tags.get("Image LensModel"))
                             if not date_taken:
-                                date_taken = _decode_if_bytes(tags.get("EXIF DateTimeOriginal") or tags.get("Image DateTime"))
+                                date_taken_full = _decode_if_bytes(tags.get("EXIF DateTimeOriginal") or tags.get("Image DateTime"))
+                                if date_taken_full and " " in date_taken_full:
+                                    date_taken, time_taken = date_taken_full.split(" ", 1)
+                                elif date_taken_full:
+                                    date_taken = date_taken_full
                             
                             if not iso:
                                 iso = tags.get("EXIF ISOSpeedRatings") or tags.get("Image ISOSpeedRatings")
@@ -313,6 +341,7 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         "filetype": filetype,
         "directory": directory,
         "date_taken": date_taken,
+        "time_taken": time_taken,
         "camera": camera,
         "lens": lens,
         "focal_length": _to_float(focal_length) if focal_length is not None else None,
@@ -371,6 +400,7 @@ def generate_images_table(
                 "filetype",
                 "directory",
                 "date_taken",
+                "time_taken",
                 "camera",
                 "lens",
                 "focal_length",
@@ -418,6 +448,7 @@ def generate_images_table(
                 "filetype",
                 "directory",
                 "date_taken",
+                "time_taken",
                 "camera",
                 "lens",
                 "focal_length",
@@ -445,8 +476,8 @@ def generate_images_table(
 
         if "date_taken" in df_images.columns:
             df_images["date_taken"] = pd.to_datetime(
-                df_images["date_taken"], errors="coerce", format="%Y:%m:%d %H:%M:%S"
-            )
+                df_images["date_taken"], errors="coerce", format="%Y:%m:%d"
+            ).dt.date
 
     return df_images, pd.DataFrame(), pd.DataFrame()
 
