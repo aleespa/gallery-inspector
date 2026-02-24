@@ -422,7 +422,7 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         "focal_length": _to_float(focal_length) if focal_length is not None else None,
         "aperture": _to_float(aperture) if aperture is not None else None,
         "iso": int(str(iso)) if iso else None,
-        "shutter_speed": str(shutter_speed) if shutter_speed is not None else None,
+        "shutter_speed": str(shutter_speed) + "s" if shutter_speed is not None else None,
         "size_bytes": size_bytes,
         "size_mb": size_mb,
         "width": int(str(width)) if width is not None else None,

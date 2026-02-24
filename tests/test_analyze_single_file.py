@@ -47,7 +47,7 @@ class TestAnalyzeSingleFile(TestCase):
         self.assertEqual(result.get("focal_length"), 28.0)
         self.assertEqual(result.get("aperture"), 4.0)
         self.assertEqual(result.get("iso"), 100)
-        self.assertEqual(result.get("shutter_speed"), "1/400")
+        self.assertEqual(result.get("shutter_speed"), "1/400s")
 
     def test_analyze_raw_cr3(self):
         self.assertTrue(self.raw_cr3_path.exists(), "Test image file is missing")
@@ -65,4 +65,4 @@ class TestAnalyzeSingleFile(TestCase):
         self.assertEqual(result.get("focal_length"), 24.0)
         self.assertEqual(result.get("aperture"), 4.0)
         self.assertEqual(result.get("iso"), 100)
-        self.assertEqual(result.get("shutter_speed"), "1/2000")
+        self.assertEqual(result.get("shutter_speed"), "1/2000s")
