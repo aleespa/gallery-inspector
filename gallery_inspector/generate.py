@@ -66,6 +66,81 @@ def analyze_image(path: Path) -> Optional[Dict]:
     return None
 
 
+def analyze_video(path: Path) -> Optional[Dict]:
+    try:
+        file_name = path.name
+        name = file_name.rsplit(".", 1)[0]
+        filetype = path.suffix.lower()
+        directory = str(path.parent)
+        size_bytes = path.stat().st_size
+        size_mb = round(size_bytes / (1024 * 1024), 2)
+
+        media_info = MediaInfo.parse(str(path))
+        duration = None
+        width = None
+        height = None
+        date_taken = None
+        time_taken = None
+        codec = None
+        frame_rate = None
+
+        for track in media_info.tracks:
+            if track.track_type == "General":
+                duration = track.duration  # in ms
+                creation_date = track.tagged_date or track.encoded_date
+                if creation_date:
+                    creation_date = creation_date.replace(" UTC", "")
+                    match = re.search(
+                        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
+                        creation_date,
+                    )
+                    if match:
+                        dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                        date_taken = dt.strftime("%Y:%m:%d")
+                        time_taken = dt.strftime("%H:%M:%S")
+            elif track.track_type == "Video":
+                width = track.width
+                height = track.height
+                codec = track.format
+                frame_rate = track.frame_rate
+
+        return {
+            "name": name,
+            "filetype": filetype,
+            "directory": directory,
+            "date_taken": date_taken,
+            "time_taken": time_taken,
+            "size_bytes": size_bytes,
+            "size_mb": size_mb,
+            "width": width,
+            "height": height,
+            "duration_ms": duration,
+            "codec": codec,
+            "frame_rate": frame_rate,
+        }
+    except Exception:
+        return None
+
+
+def analyze_other(path: Path) -> Optional[Dict]:
+    try:
+        file_name = path.name
+        name = file_name.rsplit(".", 1)[0]
+        filetype = path.suffix.lower()
+        directory = str(path.parent)
+        size_bytes = path.stat().st_size
+        size_mb = round(size_bytes / (1024 * 1024), 2)
+
+        return {
+            "name": name,
+            "filetype": filetype,
+            "directory": directory,
+            "size_bytes": size_bytes,
+            "size_mb": size_mb,
+        }
+    except Exception:
+        return None
+
 def analyze_jpeg(path: Path) -> Optional[Dict]:
     try:
         file_name = path.name
@@ -355,131 +430,147 @@ def analyze_raw(path: Path) -> Optional[Dict]:
     }
 
 
-def _analyze_video(path: Path) -> Optional[Dict]:
-    return {}
 
 
 
-
-def generate_images_table(
+def analyze_directories(
     paths: List[Path],
     stop_event: Optional[threading.Event] = None,
     pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     logger.info(f"Starting directory analysis for: {[str(p) for p in paths]}")
-    all_files = []
+    all_images = []
+    all_videos = []
+    all_others = []
     files_to_process = []
 
     image_extensions = {".jpg", ".jpeg", ".cr2", ".cr3"}
+    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
+
+    def format_df(df, type_name):
+        if df.empty:
+            if type_name == "image":
+                return pd.DataFrame(
+                    columns=[
+                        "name",
+                        "filetype",
+                        "directory",
+                        "date_taken",
+                        "time_taken",
+                        "camera",
+                        "lens",
+                        "focal_length",
+                        "aperture",
+                        "iso",
+                        "shutter_speed",
+                        "size_bytes",
+                        "size (MB)",
+                        "width",
+                        "height",
+                    ]
+                )
+            elif type_name == "video":
+                return pd.DataFrame(
+                    columns=[
+                        "name",
+                        "filetype",
+                        "directory",
+                        "date_taken",
+                        "time_taken",
+                        "size_bytes",
+                        "size (MB)",
+                        "width",
+                        "height",
+                        "duration_ms",
+                        "codec",
+                        "frame_rate",
+                    ]
+                )
+            else:
+                return pd.DataFrame(
+                    columns=["name", "filetype", "directory", "size_bytes", "size (MB)"]
+                )
+
+        df = df.map(clean_excel_unsafe)
+        if "size_bytes" in df.columns:
+            df["size (MB)"] = (df["size_bytes"] / 1048576).round(2)
+        if "size_mb" in df.columns:
+            df = df.drop(columns=["size_mb"], errors="ignore")
+
+        if type_name == "image":
+            for col in ["aperture", "focal_length"]:
+                if col in df.columns:
+                    df[col] = df[col].map(rational_to_float)
+
+            if "date_taken" in df.columns:
+                df["date_taken"] = pd.to_datetime(
+                    df["date_taken"], errors="coerce", format="%Y:%m:%d"
+                ).dt.date
+        return df
 
     for path in paths:
         for dirpath, dir_names, filenames in os.walk(path, topdown=False):
             if stop_event and stop_event.is_set():
                 logger.warning("Directory analysis stopped by user during walk.")
-                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
 
             if pause_event:
                 while pause_event.is_set():
                     if stop_event and stop_event.is_set():
-                        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                        return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
                     threading.Event().wait(0.1)
 
             logger.debug(f"Analyzing directory: {dirpath}")
             for f in filenames:
                 fp = Path(dirpath) / f
-                if fp.suffix.lower() in image_extensions:
-                    files_to_process.append(fp)
+                files_to_process.append(fp)
 
     total_files = len(files_to_process)
     if total_files == 0:
         logger.warning("No files found to analyze.")
-        empty_df = pd.DataFrame(
-            columns=[
-                "name",
-                "filetype",
-                "directory",
-                "date_taken",
-                "time_taken",
-                "camera",
-                "lens",
-                "focal_length",
-                "aperture",
-                "iso",
-                "shutter_speed",
-                "size_bytes",
-                "size (MB)",
-                "width",
-                "height",
-            ]
-        )
-        return empty_df, pd.DataFrame(), pd.DataFrame()
+        return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
+
+    def _analyze_any(fp: Path):
+        ext = fp.suffix.lower()
+        if ext in image_extensions:
+            return "image", analyze_image(fp)
+        elif ext in video_extensions:
+            return "video", analyze_video(fp)
+        else:
+            return "other", analyze_other(fp)
 
     logger.info(f"Extracting metadata from {total_files} files...")
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [
-            executor.submit(analyze_image, fp)
-            for fp in files_to_process
-        ]
+        futures = [executor.submit(_analyze_any, fp) for fp in files_to_process]
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             if stop_event and stop_event.is_set():
                 executor.shutdown(wait=False, cancel_futures=True)
-                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
 
             if pause_event:
                 while pause_event.is_set():
                     if stop_event and stop_event.is_set():
                         executor.shutdown(wait=False, cancel_futures=True)
-                        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                        return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
                     threading.Event().wait(0.1)
 
-            result = future.result()
+            category, result = future.result()
             if result:
-                all_files.append(result)
+                if category == "image":
+                    all_images.append(result)
+                elif category == "video":
+                    all_videos.append(result)
+                else:
+                    all_others.append(result)
             if progress_callback:
                 progress_callback((i + 1) / total_files)
 
-    df_images = pd.DataFrame(all_files)
+    df_images = pd.DataFrame(all_images)
+    df_videos = pd.DataFrame(all_videos)
+    df_others = pd.DataFrame(all_others)
 
-    if df_images.empty:
-        df_images = pd.DataFrame(
-            columns=[
-                "name",
-                "filetype",
-                "directory",
-                "date_taken",
-                "time_taken",
-                "camera",
-                "lens",
-                "focal_length",
-                "aperture",
-                "iso",
-                "shutter_speed",
-                "size_bytes",
-                "size (MB)",
-                "width",
-                "height",
-            ]
-        )
-    else:
-        df_images = df_images.map(clean_excel_unsafe)
-        if "size_bytes" in df_images.columns:
-            df_images["size (MB)"] = (df_images["size_bytes"] / 1048576).round(2)
-        # Remove duplicate size column if present
-        if "size_mb" in df_images.columns:
-            df_images = df_images.drop(columns=["size_mb"], errors="ignore")
-
-        # Ensure columns exist before mapping (do NOT convert shutter_speed strings)
-        for col in ["aperture", "focal_length"]:
-            if col in df_images.columns:
-                df_images[col] = df_images[col].map(rational_to_float)
-
-        if "date_taken" in df_images.columns:
-            df_images["date_taken"] = pd.to_datetime(
-                df_images["date_taken"], errors="coerce", format="%Y:%m:%d"
-            ).dt.date
-
-    return df_images, pd.DataFrame(), pd.DataFrame()
+    return format_df(df_images, "image"), format_df(df_videos, "video"), format_df(df_others, "other")
 
 
 def sanitize_folder_name(name: str) -> str | None:

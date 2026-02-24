@@ -2,7 +2,7 @@ import unittest
 import pandas as pd
 from pathlib import Path
 from gallery_inspector.export import export_files_table
-from gallery_inspector.generate import generate_images_table
+from gallery_inspector.generate import analyze_directories
 
 class TestExportTable(unittest.TestCase):
     @classmethod
@@ -14,7 +14,7 @@ class TestExportTable(unittest.TestCase):
 
     def test_export_files_table(self):
         # Generate real data from resources
-        df_images, df_videos, df_others = generate_images_table([self.resources_dir])
+        df_images, df_videos, df_others = analyze_directories([self.resources_dir])
         
         # We expect 3 images based on resources: test.CR2, test.CR3, test.JPG
         self.assertEqual(len(df_images), 3)

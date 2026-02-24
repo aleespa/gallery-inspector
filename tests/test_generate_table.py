@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 import pandas as pd
-from gallery_inspector.generate import generate_images_table
+from gallery_inspector.generate import analyze_directories
 
 class TestGenerateTable(unittest.TestCase):
     @classmethod
@@ -12,8 +12,8 @@ class TestGenerateTable(unittest.TestCase):
             raise unittest.SkipTest("Resources directory not found")
 
     def test_generate_images_table_with_resources(self):
-        # Call generate_images_table
-        images_df, videos_df, others_df = generate_images_table([self.resources_dir])
+        # Call analyze_directories
+        images_df, videos_df, others_df = analyze_directories([self.resources_dir])
 
         # Assertions
         self.assertIsInstance(images_df, pd.DataFrame)
@@ -43,7 +43,7 @@ class TestGenerateTable(unittest.TestCase):
 
     def test_generate_images_table_empty(self):
         # Test with an empty list of paths
-        images_df, videos_df, others_df = generate_images_table([])
+        images_df, videos_df, others_df = analyze_directories([])
         self.assertEqual(len(images_df), 0)
         self.assertEqual(len(videos_df), 0)
         self.assertEqual(len(others_df), 0)

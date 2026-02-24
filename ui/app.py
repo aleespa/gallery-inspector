@@ -23,7 +23,7 @@ from gallery_inspector.convertor import cr2_to_jpg
 from gallery_inspector.export import export_files_table
 from gallery_inspector.generate import (
     Options,
-    generate_images_table,
+    analyze_directories,
     generated_directory,
 )
 
@@ -245,7 +245,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             output_p = Path(output_path)
 
             if func == "analysis":
-                df_images, df_videos, df_others = generate_images_table(
+                df_images, df_videos, df_others = analyze_directories(
                     input_ps,
                     stop_event=self.stop_event,
                     pause_event=self.pause_event,
