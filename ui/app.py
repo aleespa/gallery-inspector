@@ -295,8 +295,9 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             if self.stop_event.is_set():
                 self.after(0, lambda: self.finish_stopped(btn))
             else:
-                logger.exception(f"Unexpected error: {e}")
-                self.after(0, lambda: self.finish_error(str(e), btn))
+                err_msg = str(e)
+                logger.exception(f"Unexpected error: {err_msg}")
+                self.after(0, lambda: self.finish_error(err_msg, btn))
 
     def finish_success(self, msg, btn):
         btn.configure(state="normal")
