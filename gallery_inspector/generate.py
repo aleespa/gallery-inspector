@@ -4,12 +4,11 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Optional
+from typing import Callable, List, Literal, Optional
 
-from PIL import Image
-from PIL.ExifTags import TAGS
 from loguru import logger
-from pymediainfo import MediaInfo
+
+from gallery_inspector.analysis import analyze_image, analyze_video
 
 OrderType = Literal["Year/Month", "Year", "Camera", "Lens", "Camera/Lens"]
 
@@ -29,174 +28,6 @@ def sanitize_folder_name(name: str) -> str | None:
         return re.sub(r"[^\w\-_. ]", "_", name)
 
 
-def _get_image_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
-    date = None
-    model = None
-    lens = None
-    try:
-        # Try PIL first
-        try:
-            img = Image.open(file)
-            exif_data = img._getexif()
-            img.close()
-
-            tag_ids = {v: k for k, v in TAGS.items()}
-
-            if exif_data:
-                date_str = exif_data.get(tag_ids.get("DateTimeOriginal"))
-                if date_str:
-                    try:
-                        date_only = date_str.split(" ")[0]
-                        date = datetime.strptime(date_only, "%Y:%m:%d")
-                    except (ValueError, IndexError):
-                        pass
-
-                model = exif_data.get(tag_ids.get("Model"))
-                lens = exif_data.get(tag_ids.get("LensModel"))
-        except Exception:
-            # PIL might fail to open or it might not have exif
-            pass
-
-        # If PIL failed to get critical info and it's a .cr3, try MediaInfo
-        if (not date or not model) and file.suffix.lower() in {".cr2", ".cr3"}:
-            try:
-                media_info = MediaInfo.parse(file)
-                for track in media_info.tracks:
-                    if track.track_type == "General":
-                        if not date:
-                            creation_date = track.tagged_date or track.encoded_date
-                            if creation_date:
-                                # Remove UTC if present
-                                creation_date = creation_date.replace(" UTC", "")
-                                match = re.search(
-                                    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
-                                    creation_date,
-                                )
-                                if match:
-                                    date = datetime.strptime(
-                                        match.group(1), "%Y-%m-%d %H:%M:%S"
-                                    )
-                        if not model:
-                            model = track.model
-                        if not lens:
-                            lens = track.lens_model
-                        break
-            except Exception as e:
-                logger.debug(f"MediaInfo error for {file}: {e}")
-
-        if date or model or lens:
-            return {
-                "Year": f"{date.year:04d}" if date else None,
-                "Month": f"{date.month:02d}" if date else None,
-                "Model": sanitize_folder_name(model) if model else None,
-                "Lens": sanitize_folder_name(lens) if lens else None,
-            }
-        return None
-    except Exception:
-        return None
-
-
-def _get_video_metadata(file: Path) -> Optional[Dict[str, Optional[str]]]:
-    try:
-        media_info = MediaInfo.parse(file)
-        creation_date = None
-        for track in media_info.tracks:
-            if track.track_type == "General":
-                creation_date = track.tagged_date or track.encoded_date
-                break
-
-        date = None
-        if creation_date:
-            match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", creation_date)
-            if match:
-                date = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-
-        return {
-            "Year": f"{date.year:04d}" if date else None,
-            "Month": f"{date.month:02d}" if date else None,
-        }
-    except Exception:
-        return None
-
-
-def _process_single_file(
-    file: Path, output: Path, options: Options
-) -> Literal["copied", "skipped", "error"]:
-    image_extensions = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".cr2",
-        ".nef",
-        ".tiff",
-        ".arw",
-        ".cr3",
-    }
-    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
-
-    suffix = file.suffix.lower()
-    is_image = suffix in image_extensions
-    is_video = suffix in video_extensions
-
-    target_dir = output
-
-    if options.by_media_type and (is_image or is_video):
-        media_folder = "Photos" if is_image else "Videos"
-        target_dir = target_dir / media_folder
-
-    try:
-        if is_image:
-            metadata = _get_image_metadata(file)
-            if metadata is None:
-                target_dir = target_dir / "No Info"
-            else:
-                for arg in options.structure:
-                    val = metadata.get(arg)
-                    target_dir = target_dir / (val if val is not None else "No Info")
-        elif is_video:
-            metadata = _get_video_metadata(file)
-            if metadata is None:
-                target_dir = target_dir / "No Info"
-            else:
-                if not options.structure:
-                    target_dir = target_dir / "No Info"
-                else:
-                    for arg in options.structure:
-                        val = metadata.get(arg)
-                        target_dir = target_dir / (
-                            val if val is not None else "No Info"
-                        )
-        else:
-            target_dir = target_dir / "No Info"
-    except Exception as e:
-        target_dir = target_dir / "No Info"
-        if options.verbose:
-            logger.warning(f"Error extracting metadata from {file}: {e}")
-
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        destination = target_dir / file.name
-
-        if options.on_exist == "skip" and destination.exists():
-            if options.verbose:
-                logger.info(f"Skipping {file} as it already exists at {destination}")
-            return "skipped"
-        elif options.on_exist == "rename":
-            if destination.exists():
-                stem, suffix = file.stem, file.suffix
-                counter = 1
-                while destination.exists():
-                    destination = target_dir / f"{stem}_{counter}{suffix}"
-                    counter += 1
-
-        logger.info(f"Copying {file} -> {destination}")
-        shutil.copy2(file, destination)
-        return "copied"
-    except Exception as e:
-        logger.error(f"Failed to copy {file} to {target_dir}: {e}")
-        return "error"
-
-
 def generated_directory(
     input_paths: List[Path],
     output: Path,
@@ -211,6 +42,71 @@ def generated_directory(
             if not file.is_dir():
                 all_files.append(file)
 
+    _process_files(all_files, output, options, stop_event, pause_event, progress_callback)
+
+
+def generated_directory_from_list(
+    files: List[Path],
+    output: Path,
+    options: Options,
+    stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
+) -> None:
+    all_files = [f for f in files if not f.is_dir()]
+    _process_files(all_files, output, options, stop_event, pause_event, progress_callback)
+
+
+def _extract_metadata(file: Path, is_image: bool, is_video: bool) -> Optional[dict]:
+    if is_image:
+        raw_metadata = analyze_image(file)
+    elif is_video:
+        raw_metadata = analyze_video(file)
+    else:
+        return None
+
+    if not raw_metadata:
+        return None
+
+    year, month = None, None
+    date_str = raw_metadata.get("date_taken")
+    if date_str:
+        try:
+            parts = date_str.split(":")
+            if len(parts) >= 2:
+                year = parts[0]
+                month = parts[1]
+        except Exception:
+            pass
+
+    if is_image:
+        model = raw_metadata.get("camera")
+        lens = raw_metadata.get("lens")
+        if year or month or model or lens:
+            return {
+                "Year": year,
+                "Month": month,
+                "Model": sanitize_folder_name(model) if model else None,
+                "Lens": sanitize_folder_name(lens) if lens else None,
+            }
+    elif is_video:
+        if year or month:
+            return {
+                "Year": year,
+                "Month": month,
+            }
+            
+    return None
+
+
+def _process_files(
+    all_files: List[Path],
+    output: Path,
+    options: Options,
+    stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
+) -> None:
     total_files = len(all_files)
     if total_files == 0:
         logger.warning("No files found to organize.")
@@ -219,6 +115,18 @@ def generated_directory(
     logger.info(f"Organizing {total_files} files into {output}...")
     successful_copies = 0
     excluded_files = []
+
+    image_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".cr2",
+        ".nef",
+        ".tiff",
+        ".arw",
+        ".cr3",
+    }
+    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
     for i, file in enumerate(all_files):
         if stop_event and stop_event.is_set():
@@ -235,56 +143,62 @@ def generated_directory(
                 logger.warning("Organization stopped by user during pause.")
                 break
 
-        status = _process_single_file(file, output, options)
-        if status == "copied":
-            successful_copies += 1
-        else:
-            excluded_files.append(file)
-            if status == "error":
-                logger.warning(
-                    f"File not copied to target directory due to error: {file}"
-                )
-            elif status == "skipped":
-                logger.info(f"File skipped (already exists): {file}")
+        # Process single file logic inline
+        status = "error"
+        try:
+            suffix = file.suffix.lower()
+            is_image = suffix in image_extensions
+            is_video = suffix in video_extensions
 
-        if progress_callback:
-            progress_callback((i + 1) / total_files)
+            target_dir = output
 
-    _final_report(total_files, successful_copies, excluded_files)
+            if options.by_media_type and (is_image or is_video):
+                media_folder = "Photos" if is_image else "Videos"
+                target_dir = target_dir / media_folder
+            else:
+                target_dir = target_dir / "Other"
 
+            metadata = _extract_metadata(file, is_image, is_video)
 
-def generated_directory_from_list(
-    files: List[Path],
-    output: Path,
-    options: Options,
-    stop_event: Optional[threading.Event] = None,
-    pause_event: Optional[threading.Event] = None,
-    progress_callback: Optional[Callable[[float], None]] = None,
-) -> None:
-    all_files = [f for f in files if not f.is_dir()]
-    total_files = len(all_files)
-    if total_files == 0:
-        return
+            if options.by_media_type and not (is_image or is_video):
+                ...
+            elif metadata is None:
+                target_dir = target_dir / "No Info"
+            else:
+                if is_video and not options.structure:
+                    target_dir = target_dir / "No Info"
+                else:
+                    for arg in options.structure:
+                        val = metadata.get(arg)
+                        if val is not None:
+                            target_dir = target_dir / val
+                        else:
+                            target_dir = target_dir / "No Info"
+                            break
 
-    successful_copies = 0
-    excluded_files = []
+            target_dir.mkdir(parents=True, exist_ok=True)
+            destination = target_dir / file.name
 
-    for i, file in enumerate(all_files):
-        if stop_event and stop_event.is_set():
-            logger.warning("Organization from list stopped by user.")
-            break
+            if options.on_exist == "skip" and destination.exists():
+                if options.verbose:
+                    logger.info(f"Skipping {file} as it already exists at {destination}")
+                status = "skipped"
+            else:
+                if options.on_exist == "rename" and destination.exists():
+                    stem, suffix = file.stem, file.suffix
+                    counter = 1
+                    while destination.exists():
+                        destination = target_dir / f"{stem}_{counter}{suffix}"
+                        counter += 1
+                
+                logger.info(f"Copying {file} -> {destination}")
+                shutil.copy2(file, destination)
+                status = "copied"
 
-        if pause_event:
-            while pause_event.is_set():
-                if stop_event and stop_event.is_set():
-                    break
-                threading.Event().wait(0.1)
+        except Exception as e:
+            logger.error(f"Failed to process {file}: {e}")
+            status = "error"
 
-            if stop_event and stop_event.is_set():
-                logger.warning("Organization from list stopped by user during pause.")
-                break
-
-        status = _process_single_file(file, output, options)
         if status == "copied":
             successful_copies += 1
         else:
