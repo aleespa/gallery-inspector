@@ -2,7 +2,7 @@ import unittest
 import pandas as pd
 from pathlib import Path
 from gallery_inspector.export import export_files_table
-from gallery_inspector.generate import analyze_directories
+from gallery_inspector.analysis import analyze_directories
 
 class TestExportTable(unittest.TestCase):
     @classmethod

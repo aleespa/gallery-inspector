@@ -23,9 +23,9 @@ from gallery_inspector.convertor import cr2_to_jpg
 from gallery_inspector.export import export_files_table
 from gallery_inspector.generate import (
     Options,
-    analyze_directories,
     generated_directory,
 )
+from gallery_inspector.analysis import analyze_directories
 
 from .components import MultiPathSelector, PathSelector
 from .tabs import AnalysisTab, ConvertTab, OrganizeTab

@@ -8,7 +8,7 @@ def build():
     ctk_path = os.path.dirname(customtkinter.__file__)
 
     # Entry point
-    entry_point = "run_app.py"
+    entry_point = "main.py"
 
     # Exclude unnecessary dependencies
     excludes = [

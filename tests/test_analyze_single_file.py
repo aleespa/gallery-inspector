@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest import TestCase
 
-from gallery_inspector.generate import analyze_raw, analyze_jpeg
+from gallery_inspector.analysis import analyze_raw, analyze_standard_image
 
 class TestAnalyzeSingleFile(TestCase):
     @classmethod
@@ -14,7 +14,7 @@ class TestAnalyzeSingleFile(TestCase):
     def test_analyze_image(self):
         self.assertTrue(self.image_path.exists(), "Test image file is missing")
 
-        result = analyze_jpeg(self.image_path)
+        result = analyze_standard_image(self.image_path)
 
         self.assertIsInstance(result, dict)
         self.assertEqual(result.get("name"), "test")

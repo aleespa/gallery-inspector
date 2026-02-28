@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 import pandas as pd
-from gallery_inspector.generate import analyze_directories
+from gallery_inspector.analysis import analyze_directories
 
 class TestGenerateTable(unittest.TestCase):
     @classmethod
