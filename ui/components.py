@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog
 import customtkinter as ctk
-from tkinterdnd2 import DND_FILES, TkinterDnD
+# from tkinterdnd2 import DND_FILES, TkinterDnD
 import os
 
 
@@ -51,31 +51,23 @@ class MultiPathSelector(ctk.CTkFrame):
             "<Leave>", lambda e: self.drop_frame.configure(border_color="gray")
         )
 
-        # This will be called from app.py to set up the actual dnd hooks
-        # because the main window needs to be a TkinterDnD.Tk instance
-
     def setup_dnd(self, tk_widget):
-        tk_widget.drop_target_register(DND_FILES)
-        tk_widget.dnd_bind("<<Drop>>", self._on_drop)
+        pass
+        # tk_widget.drop_target_register(DND_FILES)
+        # tk_widget.dnd_bind("<<Drop>>", self._on_drop)
 
     def _on_drop(self, event):
         data = event.data
-        # Handle different platforms and multiple files
         if data.startswith("{"):
-            # Windows style multiple paths with spaces
             import re
-
             paths = re.findall(r"\{(.*?)\}", data)
             if not paths:
-                paths = data.split()  # fallback
+                paths = data.split()
         else:
-            paths = data.split()  # might not work with spaces
+            paths = data.split()
 
-        # Refined path splitting for Windows if curly braces are not used
         if not data.startswith("{") and " " in data:
-            # Try to split by spaces but respect quoted paths if dnd2 provides them
             import shlex
-
             try:
                 paths = shlex.split(data)
             except ValueError:
@@ -137,19 +129,14 @@ class MultiPathSelector(ctk.CTkFrame):
 class PathSelector(ctk.CTkFrame):
     def __init__(self, parent, label_text, browse_callback, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
-
         self.grid_columnconfigure(0, weight=1)
-
         self.label = ctk.CTkLabel(self, text=label_text)
         self.label.grid(row=0, column=0, sticky="w", pady=(0, 5))
-
         self.entry_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.entry_frame.grid(row=1, column=0, sticky="ew")
         self.entry_frame.grid_columnconfigure(0, weight=1)
-
         self.entry = ctk.CTkEntry(self.entry_frame)
         self.entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-
         self.btn = ctk.CTkButton(
             self.entry_frame,
             text="Browse",
@@ -186,6 +173,7 @@ class StructureSelector(ctk.CTkFrame):
         self.checkbox_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
 
         self.option_vars = {}
+        num_columns = 2  # Arrange checkboxes in a 2-column grid
         for idx, option in enumerate(self.available_options):
             var = tk.BooleanVar(value=option in self.selected_options)
             self.option_vars[option] = var
@@ -195,7 +183,9 @@ class StructureSelector(ctk.CTkFrame):
                 variable=var,
                 command=lambda o=option: self._on_checkbox_toggle(o),
             )
-            cb.grid(row=0, column=idx, sticky="w", padx=10, pady=5)
+            row = idx // num_columns
+            col = idx % num_columns
+            cb.grid(row=row, column=col, sticky="w", padx=10, pady=5)
 
         # Selected items ordering frame
         self.order_frame = ctk.CTkFrame(self)
@@ -264,3 +254,112 @@ class StructureSelector(ctk.CTkFrame):
 
     def get(self):
         return self.selected_options
+
+
+class FilterOptionsFrame(ctk.CTkFrame):
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.grid_columnconfigure(1, weight=1)
+
+        # Filetype
+        self.filetype_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.filetype_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
+        ctk.CTkLabel(self.filetype_frame, text="File Types:", width=120, anchor="w").pack(side="left")
+        
+        self.video_var = ctk.BooleanVar()
+        self.photo_var = ctk.BooleanVar()
+        self.other_var = ctk.BooleanVar()
+        
+        ctk.CTkCheckBox(self.filetype_frame, text="Videos", variable=self.video_var).pack(side="left", padx=10)
+        ctk.CTkCheckBox(self.filetype_frame, text="Photos", variable=self.photo_var).pack(side="left", padx=10)
+        ctk.CTkCheckBox(self.filetype_frame, text="Other", variable=self.other_var).pack(side="left", padx=10)
+
+        # Extensions
+        self.extensions_entry = self._create_single_entry(1, "Extensions:", "e.g. .jpg, .mp4")
+
+        # Date Range
+        self.start_date_entry, self.end_date_entry = self._create_range_row(2, "Date Range:", "YYYY-MM-DD", "YYYY-MM-DD")
+
+        # Camera and Lens
+        self.camera_entry = self._create_single_entry(3, "Camera(s):", "comma-separated")
+        self.lens_entry = self._create_single_entry(4, "Lens(es):", "comma-separated")
+
+        # Aperture Range
+        self.min_aperture_entry, self.max_aperture_entry = self._create_range_row(5, "Aperture:", "Min", "Max")
+
+        # ISO Range
+        self.min_iso_entry, self.max_iso_entry = self._create_range_row(6, "ISO:", "Min", "Max")
+
+        # Shutter Speed Range
+        self.min_shutter_entry, self.max_shutter_entry = self._create_range_row(7, "Shutter Speed:", "Min (e.g. 1/100)", "Max")
+
+    def _create_single_entry(self, row, label_text, placeholder):
+        ctk.CTkLabel(self, text=label_text, width=120, anchor="w").grid(row=row, column=0, sticky="w", padx=10, pady=5)
+        entry = ctk.CTkEntry(self, placeholder_text=placeholder)
+        entry.grid(row=row, column=1, sticky="ew", padx=10, pady=5)
+        return entry
+
+    def _create_range_row(self, row, label_text, p1, p2):
+        ctk.CTkLabel(self, text=label_text, width=120, anchor="w").grid(row=row, column=0, sticky="w", padx=10, pady=5)
+        
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.grid(row=row, column=1, sticky="ew", padx=0, pady=5)
+        frame.grid_columnconfigure((0, 2), weight=1)
+        
+        e1 = ctk.CTkEntry(frame, placeholder_text=p1)
+        e1.grid(row=0, column=0, sticky="ew", padx=(10, 5))
+        
+        ctk.CTkLabel(frame, text="to").grid(row=0, column=1, padx=5)
+        
+        e2 = ctk.CTkEntry(frame, placeholder_text=p2)
+        e2.grid(row=0, column=2, sticky="ew", padx=(5, 10))
+        
+        return e1, e2
+
+    def get_query(self):
+        from gallery_inspector.filtering import FilterOptions
+        from datetime import date
+
+        filetypes = []
+        if self.video_var.get(): filetypes.append("video")
+        if self.photo_var.get(): filetypes.append("image")
+        if self.other_var.get(): filetypes.append("other")
+
+        extensions = [e.strip() for e in self.extensions_entry.get().split(",") if e.strip()]
+        
+        start_date_str = self.start_date_entry.get()
+        end_date_str = self.end_date_entry.get()
+        date_range = None
+        try:
+            start_date = date.fromisoformat(start_date_str) if start_date_str else None
+            end_date = date.fromisoformat(end_date_str) if end_date_str else None
+            if start_date or end_date:
+                date_range = (start_date, end_date)
+        except ValueError:
+            pass
+
+        cameras = [c.strip() for c in self.camera_entry.get().split(",") if c.strip()]
+        lenses = [l.strip() for l in self.lens_entry.get().split(",") if l.strip()]
+
+        min_ap = float(self.min_aperture_entry.get()) if self.min_aperture_entry.get() else None
+        max_ap = float(self.max_aperture_entry.get()) if self.max_aperture_entry.get() else None
+        aperture_range = (min_ap, max_ap) if min_ap is not None or max_ap is not None else None
+
+        min_iso = int(self.min_iso_entry.get()) if self.min_iso_entry.get() else None
+        max_iso = int(self.max_iso_entry.get()) if self.max_iso_entry.get() else None
+        iso_range = (min_iso, max_iso) if min_iso is not None or max_iso is not None else None
+
+        min_ss = self.min_shutter_entry.get() if self.min_shutter_entry.get() else None
+        max_ss = self.max_shutter_entry.get() if self.max_shutter_entry.get() else None
+        shutter_speed_range = (min_ss, max_ss) if min_ss or max_ss else None
+
+        return FilterOptions(
+            filetypes=filetypes or None,
+            extensions=extensions or None,
+            date_range=date_range,
+            cameras=cameras or None,
+            lenses=lenses or None,
+            aperture_range=aperture_range,
+            iso_range=iso_range,
+            shutter_speed_range=shutter_speed_range,
+        )

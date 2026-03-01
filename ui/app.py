@@ -17,15 +17,7 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 from loguru import logger
-from tkinterdnd2 import DND_FILES, TkinterDnD
-
-from gallery_inspector.filtering import filter_files
-from gallery_inspector.export import export_files_table
-from gallery_inspector.generate import (
-    Options,
-    generated_directory,
-)
-from gallery_inspector.analysis import analyze_directories
+# from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from .components import MultiPathSelector, PathSelector
 from .tabs import AnalysisTab, FilterTab, OrganizeTab
@@ -35,10 +27,10 @@ ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
 
-class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
+class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
-        self.TkdndVersion = TkinterDnD._require(self)
+        # self.TkdndVersion = TkinterDnD._require(self)
 
         self.title("Gallery Inspector UI")
         self.geometry("1200x700")
@@ -76,7 +68,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.input_selector = MultiPathSelector(self.left_frame, "Input Directories:")
         self.input_selector.grid(row=1, column=0, sticky="ew", pady=10)
-        self.input_selector.setup_dnd(self)
+        # self.input_selector.setup_dnd(self)
 
         self.output_selector = PathSelector(
             self.left_frame, "Output Directory:", self.browse_directory
@@ -86,6 +78,7 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         # Right Column: Tabview
         self.tabview = ctk.CTkTabview(self)
         self.tabview.grid(row=0, column=1, padx=20, pady=(20, 10), sticky="nsew")
+        self.tabview.grid_propagate(False)
 
         self.tab_organize = self.tabview.add("Organize")
         self.tab_analysis = self.tabview.add("Analysis")
@@ -239,7 +232,11 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
             target=self.execute, args=(func, input_paths, output_path, btn), daemon=True
         ).start()
 
-    def execute(self, func, input_paths, output_path, btn):
+    def execute(self, func, input_paths, output_path, btn):  # noqa: C901
+        from gallery_inspector.filtering import filter_files
+        from gallery_inspector.export import export_files_table
+        from gallery_inspector.generate import Options, generated_directory
+        from gallery_inspector.analysis import analyze_directories
         try:
             input_ps = [Path(p) for p in input_paths]
             output_p = Path(output_path)
@@ -260,19 +257,30 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                 export_files_table(df_images, df_videos, df_others, output_file)
                 msg = f"Analysis complete. Results saved to {output_file}"
             elif func == "filter":
+                query = self.filter_view.get_filter_query()
+                output_options_dict = self.filter_view.get_output_options()
+                output_options = Options(**output_options_dict)
+                
+                all_files = []
+                for p in input_ps:
+                    for file in p.rglob("*"):
+                        if not file.is_dir():
+                            all_files.append(file)
+
                 filter_files(
-                    input_ps,
+                    all_files,
                     output_p,
-                    dict(),
+                    output_options,
+                    query,
                     stop_event=self.stop_event,
                     pause_event=self.pause_event,
                     progress_callback=self.update_progress,
                 )
                 if self.stop_event.is_set():
-                    logger.warning("Conversion cancelled by user.")
+                    logger.warning("Filtering cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
-                msg = f"Conversion complete. JPGs saved to {output_p}"
+                msg = f"Filtering complete. Filtered files organized in {output_p}"
             elif func == "create":
                 options_dict = self.organize_view.get_options()
                 options = Options(**options_dict)
