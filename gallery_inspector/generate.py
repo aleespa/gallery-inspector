@@ -42,7 +42,7 @@ def generated_directory(
             if not file.is_dir():
                 all_files.append(file)
 
-    _process_files(all_files, output, options, stop_event, pause_event, progress_callback)
+    organize_files_by_options(all_files, output, options, stop_event, pause_event, progress_callback)
 
 
 def generated_directory_from_list(
@@ -54,7 +54,7 @@ def generated_directory_from_list(
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> None:
     all_files = [f for f in files if not f.is_dir()]
-    _process_files(all_files, output, options, stop_event, pause_event, progress_callback)
+    organize_files_by_options(all_files, output, options, stop_event, pause_event, progress_callback)
 
 
 def _extract_metadata(file: Path, is_image: bool, is_video: bool) -> Optional[dict]:
@@ -99,15 +99,15 @@ def _extract_metadata(file: Path, is_image: bool, is_video: bool) -> Optional[di
     return None
 
 
-def _process_files(
-    all_files: List[Path],
+def organize_files_by_options(
+    files_list: List[Path],
     output: Path,
     options: Options,
     stop_event: Optional[threading.Event] = None,
     pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> None:
-    total_files = len(all_files)
+    total_files = len(files_list)
     if total_files == 0:
         logger.warning("No files found to organize.")
         return
@@ -128,7 +128,7 @@ def _process_files(
     }
     video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
-    for i, file in enumerate(all_files):
+    for i, file in enumerate(files_list):
         if stop_event and stop_event.is_set():
             logger.warning("Organization stopped by user.")
             break

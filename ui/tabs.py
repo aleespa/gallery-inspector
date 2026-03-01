@@ -68,15 +68,15 @@ class AnalysisTab(BaseTab):
         )
 
 
-class ConvertTab(BaseTab):
+class FilterTab(BaseTab):
     def __init__(self, parent, app, **kwargs):
         super().__init__(
             parent,
             app,
-            "Convert CR2",
-            "Convert CR2 files to JPG",
-            "Run Conversion",
-            lambda: app.run_process("convert"),
+            "Filter",
+            "Filter files by certain rules",
+            "Start filtering",
+            lambda: app.run_process("filter"),
             **kwargs,
         )
 

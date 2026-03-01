@@ -283,6 +283,18 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         "height": int(str(height)) if height is not None else None,
     }
 
+def analyze_any(file_path: Path):
+    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
+    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
+
+    ext = file_path.suffix.lower()
+    if ext in image_extensions:
+        return "image", analyze_image(file_path)
+    elif ext in video_extensions:
+        return "video", analyze_video(file_path)
+    else:
+        return "other", analyze_other(file_path)
+
 def analyze_directories(
     paths: List[Path],
     stop_event: Optional[threading.Event] = None,
@@ -295,8 +307,6 @@ def analyze_directories(
     all_others = []
     files_to_process = []
 
-    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
-    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
     def format_df(df, type_name):
         if df.empty:
@@ -381,18 +391,11 @@ def analyze_directories(
         logger.warning("No files found to analyze.")
         return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
 
-    def _analyze_any(fp: Path):
-        ext = fp.suffix.lower()
-        if ext in image_extensions:
-            return "image", analyze_image(fp)
-        elif ext in video_extensions:
-            return "video", analyze_video(fp)
-        else:
-            return "other", analyze_other(fp)
+
 
     logger.info(f"Extracting metadata from {total_files} files...")
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(_analyze_any, fp) for fp in files_to_process]
+        futures = [executor.submit(analyze_any, fp) for fp in files_to_process]
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             if stop_event and stop_event.is_set():
                 executor.shutdown(wait=False, cancel_futures=True)

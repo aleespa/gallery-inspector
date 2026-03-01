@@ -19,7 +19,7 @@ import customtkinter as ctk
 from loguru import logger
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from gallery_inspector.convertor import cr2_to_jpg
+from gallery_inspector.filtering import filter_files
 from gallery_inspector.export import export_files_table
 from gallery_inspector.generate import (
     Options,
@@ -28,7 +28,7 @@ from gallery_inspector.generate import (
 from gallery_inspector.analysis import analyze_directories
 
 from .components import MultiPathSelector, PathSelector
-from .tabs import AnalysisTab, ConvertTab, OrganizeTab
+from .tabs import AnalysisTab, FilterTab, OrganizeTab
 
 # Set appearance mode and color theme
 ctk.set_appearance_mode("System")
@@ -89,13 +89,13 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.tab_organize = self.tabview.add("Organize")
         self.tab_analysis = self.tabview.add("Analysis")
-        self.tab_convert = self.tabview.add("Convert CR2")
+        self.tab_filter = self.tabview.add("Filtering")
 
         self.analysis_view = AnalysisTab(self.tab_analysis, self)
         self.analysis_view.pack(fill="both", expand=True)
 
-        self.convert_view = ConvertTab(self.tab_convert, self)
-        self.convert_view.pack(fill="both", expand=True)
+        self.filter_view = FilterTab(self.tab_filter, self)
+        self.filter_view.pack(fill="both", expand=True)
 
         self.organize_view = OrganizeTab(self.tab_organize, self)
         self.organize_view.pack(fill="both", expand=True)
@@ -138,8 +138,8 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
         tab_name = self.tabview.get()
         if tab_name == "Analysis":
             return self.analysis_view
-        elif tab_name == "Convert CR2":
-            return self.convert_view
+        elif tab_name == "Filtering":
+            return self.filter_view
         else:
             return self.organize_view
 
@@ -204,8 +204,8 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
     def run_process(self, func):
         if func == "analysis":
             btn = self.analysis_view.run_button
-        elif func == "convert":
-            btn = self.convert_view.run_button
+        elif func == "filter":
+            btn = self.filter_view.run_button
         else:  # create
             btn = self.organize_view.run_button
 
@@ -259,10 +259,11 @@ class GalleryInspectorUI(ctk.CTk, TkinterDnD.DnDWrapper):
                 output_file = output_p / f"analysis_{name_date}.xlsx"
                 export_files_table(df_images, df_videos, df_others, output_file)
                 msg = f"Analysis complete. Results saved to {output_file}"
-            elif func == "convert":
-                cr2_to_jpg(
+            elif func == "filter":
+                filter_files(
                     input_ps,
                     output_p,
+                    dict(),
                     stop_event=self.stop_event,
                     pause_event=self.pause_event,
                     progress_callback=self.update_progress,
