@@ -381,7 +381,7 @@ def analyze_directories(
                         return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
                     threading.Event().wait(0.1)
 
-            logger.debug(f"Analyzing directory: {dirpath}")
+            logger.info(f"Analyzing directory: {dirpath}")
             for f in filenames:
                 fp = Path(dirpath) / f
                 files_to_process.append(fp)
