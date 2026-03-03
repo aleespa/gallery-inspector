@@ -9,7 +9,7 @@ def export_files_table(
     others_df: pd.DataFrame,
     output_path: Path,
 ) -> None:
-    with pd.ExcelWriter(output_path) as writer:
+    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
         to_sheet_formatted(images_df, writer, sheet_name="images", index=False)
         to_sheet_formatted(videos_df, writer, sheet_name="videos", index=False)
         to_sheet_formatted(others_df, writer, sheet_name="others", index=False)
@@ -41,6 +41,13 @@ def to_sheet_formatted(
     # Rewrite headers with formatting
     for col_num, column in enumerate(df.columns):
         worksheet.write(0, col_num, column, header_format)
+
+    # Create hyperlinks for 'Full path' column
+    if "Full path" in df.columns:
+        full_path_col_idx = df.columns.get_loc("Full path")
+        for row_num, path in enumerate(df["Full path"], 1):  # 1-based for rows after header
+            if pd.notna(path):
+                worksheet.write_url(row_num, full_path_col_idx, f"file:///{path}", string=str(path))
 
     # Adjust column widths
     for col_num, column in enumerate(df.columns):

@@ -95,6 +95,7 @@ def analyze_video(path: Path) -> Optional[Dict]:
             "name": name,
             "filetype": filetype,
             "directory": directory,
+            "Full path": str(path.resolve()),
             "date_taken": date_taken,
             "time_taken": time_taken,
             "size_bytes": size_bytes,
@@ -122,6 +123,7 @@ def analyze_other(path: Path) -> Optional[Dict]:
             "name": name,
             "filetype": filetype,
             "directory": directory,
+            "Full path": str(path.resolve()),
             "size_bytes": size_bytes,
             "size_mb": size_mb,
         }
@@ -173,6 +175,7 @@ def analyze_standard_image(path: Path) -> Optional[Dict]:
             "name": name,
             "filetype": filetype,
             "directory": directory,
+            "Full path": str(path.resolve()),
             "date_taken": date_taken,
             "time_taken": time_taken,
             "camera": camera,
@@ -269,6 +272,7 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         "name": name,
         "filetype": filetype,
         "directory": directory,
+        "Full path": str(path.resolve()),
         "date_taken": date_taken,
         "time_taken": time_taken,
         "camera": camera,
@@ -316,6 +320,7 @@ def analyze_directories(
                         "name",
                         "filetype",
                         "directory",
+                        "Full path",
                         "date_taken",
                         "time_taken",
                         "camera",
@@ -336,6 +341,7 @@ def analyze_directories(
                         "name",
                         "filetype",
                         "directory",
+                        "Full path",
                         "date_taken",
                         "time_taken",
                         "size_bytes",
@@ -349,7 +355,7 @@ def analyze_directories(
                 )
             else:
                 return pd.DataFrame(
-                    columns=["name", "filetype", "directory", "size_bytes", "size (MB)"]
+                    columns=["name", "filetype", "directory", "Full path", "size_bytes", "size (MB)"]
                 )
 
         df = df.map(clean_excel_unsafe)
