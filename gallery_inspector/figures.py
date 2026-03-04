@@ -1,9 +1,9 @@
+import os
 from pathlib import Path
 from typing import Optional
-import os
 
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 import plotly.express as px
 
 

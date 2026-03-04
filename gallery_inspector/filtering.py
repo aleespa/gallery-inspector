@@ -1,9 +1,9 @@
-from dataclasses import dataclass, field
 import os
 import threading
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Optional, List, Callable, Tuple
-from datetime import date
 
 from loguru import logger
 
@@ -40,12 +40,13 @@ def _parse_shutter_speed(s: str) -> float:
 
 
 def filter_files(
-        files: List[str | Path], output_dir: str | Path,
-        options: Options,
-        query: FilterOptions,
-        stop_event: Optional[threading.Event] = None,
-        pause_event: Optional[threading.Event] = None,
-        progress_callback: Optional[Callable[[float], None]] = None
+    files: List[str | Path],
+    output_dir: str | Path,
+    options: Options,
+    query: FilterOptions,
+    stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Starting filtering {output_dir}")
@@ -70,36 +71,39 @@ def filter_files(
                 break
 
         filetype, metadata = analyze_any(file)
-        
+
         if not metadata:
-             if progress_callback:
+            if progress_callback:
                 progress_callback((i + 1) / total_files)
-             continue
+            continue
 
         # Filter by filetype
         if query.filetypes:
             if filetype not in query.filetypes:
-                 if progress_callback:
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
-        
+                continue
+
         # If photo options are present, only allow images
         has_photo_options = (
-            query.cameras or query.lenses or query.aperture_range or 
-            query.iso_range or query.shutter_speed_range
+            query.cameras
+            or query.lenses
+            or query.aperture_range
+            or query.iso_range
+            or query.shutter_speed_range
         )
-        
+
         if has_photo_options and filetype != "image":
-             if progress_callback:
+            if progress_callback:
                 progress_callback((i + 1) / total_files)
-             continue
+            continue
 
         # Filter by extensions
         if query.extensions:
             if file.suffix.lower() not in [e.lower() for e in query.extensions]:
-                 if progress_callback:
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
+                continue
 
         # Filter by date taken / modified
         if query.date_range:
@@ -111,7 +115,7 @@ def filter_files(
                     dt = date(*map(int, date_taken_str.split(":")))
                 except (ValueError, TypeError):
                     pass
-            
+
             if dt is None:
                 # Fallback to modification date
                 try:
@@ -122,34 +126,34 @@ def filter_files(
 
             if dt:
                 if start_date and dt < start_date:
-                     if progress_callback:
+                    if progress_callback:
                         progress_callback((i + 1) / total_files)
-                     continue
+                    continue
                 if end_date and dt > end_date:
-                     if progress_callback:
+                    if progress_callback:
                         progress_callback((i + 1) / total_files)
-                     continue
+                    continue
             else:
-                 # If still no date, skip
-                 if progress_callback:
+                # If still no date, skip
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
+                continue
 
         # Filter by camera
         if query.cameras:
             camera = metadata.get("camera")
             if not camera or camera not in query.cameras:
-                 if progress_callback:
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
+                continue
 
         # Filter by lens
         if query.lenses:
             lens = metadata.get("lens")
             if not lens or lens not in query.lenses:
-                 if progress_callback:
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
+                continue
 
         # Filter by aperture
         if query.aperture_range:
@@ -157,17 +161,17 @@ def filter_files(
             aperture = metadata.get("aperture")
             if aperture is not None:
                 if min_ap is not None and aperture < min_ap:
-                     if progress_callback:
+                    if progress_callback:
                         progress_callback((i + 1) / total_files)
-                     continue
+                    continue
                 if max_ap is not None and aperture > max_ap:
-                     if progress_callback:
+                    if progress_callback:
                         progress_callback((i + 1) / total_files)
-                     continue
+                    continue
             else:
-                 if progress_callback:
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
+                continue
 
         # Filter by ISO
         if query.iso_range:
@@ -175,17 +179,17 @@ def filter_files(
             iso = metadata.get("iso")
             if iso is not None:
                 if min_iso is not None and iso < min_iso:
-                     if progress_callback:
+                    if progress_callback:
                         progress_callback((i + 1) / total_files)
-                     continue
+                    continue
                 if max_iso is not None and iso > max_iso:
-                     if progress_callback:
+                    if progress_callback:
                         progress_callback((i + 1) / total_files)
-                     continue
+                    continue
             else:
-                 if progress_callback:
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
+                continue
 
         # Filter by shutter speed
         if query.shutter_speed_range:
@@ -196,22 +200,24 @@ def filter_files(
                 if min_ss_str:
                     min_ss = _parse_shutter_speed(min_ss_str)
                     if ss_val < min_ss:
-                         if progress_callback:
+                        if progress_callback:
                             progress_callback((i + 1) / total_files)
-                         continue
+                        continue
                 if max_ss_str:
                     max_ss = _parse_shutter_speed(max_ss_str)
                     if ss_val > max_ss:
-                         if progress_callback:
+                        if progress_callback:
                             progress_callback((i + 1) / total_files)
-                         continue
+                        continue
             else:
-                 if progress_callback:
+                if progress_callback:
                     progress_callback((i + 1) / total_files)
-                 continue
+                continue
 
         filtered_files.append(file)
         if progress_callback:
             progress_callback((i + 1) / total_files)
 
-    organize_files_by_options(filtered_files, output_dir, options, stop_event, pause_event, progress_callback)
+    organize_files_by_options(
+        filtered_files, output_dir, options, stop_event, pause_event, progress_callback
+    )

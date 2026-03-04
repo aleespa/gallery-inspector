@@ -42,7 +42,9 @@ def generated_directory(
             if not file.is_dir():
                 all_files.append(file)
 
-    organize_files_by_options(all_files, output, options, stop_event, pause_event, progress_callback)
+    organize_files_by_options(
+        all_files, output, options, stop_event, pause_event, progress_callback
+    )
 
 
 def generated_directory_from_list(
@@ -54,7 +56,9 @@ def generated_directory_from_list(
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> None:
     all_files = [f for f in files if not f.is_dir()]
-    organize_files_by_options(all_files, output, options, stop_event, pause_event, progress_callback)
+    organize_files_by_options(
+        all_files, output, options, stop_event, pause_event, progress_callback
+    )
 
 
 def _extract_metadata(file: Path, is_image: bool, is_video: bool) -> Optional[dict]:
@@ -95,7 +99,7 @@ def _extract_metadata(file: Path, is_image: bool, is_video: bool) -> Optional[di
                 "Year": year,
                 "Month": month,
             }
-            
+
     return None
 
 
@@ -181,7 +185,9 @@ def organize_files_by_options(
 
             if options.on_exist == "skip" and destination.exists():
                 if options.verbose:
-                    logger.info(f"Skipping {file} as it already exists at {destination}")
+                    logger.info(
+                        f"Skipping {file} as it already exists at {destination}"
+                    )
                 status = "skipped"
             else:
                 if options.on_exist == "rename" and destination.exists():
@@ -190,7 +196,7 @@ def organize_files_by_options(
                     while destination.exists():
                         destination = target_dir / f"{stem}_{counter}{suffix}"
                         counter += 1
-                
+
                 logger.info(f"Copying {file} -> {destination}")
                 shutil.copy2(file, destination)
                 status = "copied"

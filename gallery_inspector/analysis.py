@@ -1,19 +1,20 @@
+import concurrent.futures
 import os
 import re
 import threading
-import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import exifread
 import pandas as pd
 import piexif
-import exifread
-from loguru import logger
 from PIL import Image
+from loguru import logger
 from pymediainfo import MediaInfo
 
 from gallery_inspector.common import clean_excel_unsafe, rational_to_float
+
 
 def _rational_to_float(value):
     if isinstance(value, tuple) and len(value) == 2 and value[1] != 0:
@@ -44,6 +45,7 @@ def _format_shutter(value):
             return f"{num / den:.2f}s"
         return f"{num}/{den}s"
     return value
+
 
 def analyze_image(path: Path) -> Optional[Dict]:
     if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
@@ -130,6 +132,7 @@ def analyze_other(path: Path) -> Optional[Dict]:
     except Exception:
         return None
 
+
 def analyze_standard_image(path: Path) -> Optional[Dict]:
     try:
         file_name = path.name
@@ -151,7 +154,13 @@ def analyze_standard_image(path: Path) -> Optional[Dict]:
             try:
                 exif_dict = piexif.load(str(path))
             except Exception:
-                exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+                exif_dict = {
+                    "0th": {},
+                    "Exif": {},
+                    "GPS": {},
+                    "1st": {},
+                    "thumbnail": None,
+                }
 
         zeroth = exif_dict.get("0th", {})
         exif = exif_dict.get("Exif", {})
@@ -193,6 +202,7 @@ def analyze_standard_image(path: Path) -> Optional[Dict]:
     except Exception:
         return None
 
+
 def analyze_raw(path: Path) -> Optional[Dict]:
     file_name = path.name
     name = file_name.rsplit(".", 1)[0]
@@ -204,7 +214,9 @@ def analyze_raw(path: Path) -> Optional[Dict]:
     size_bytes = path.stat().st_size
     size_mb = round(size_bytes / (1024 * 1024), 2)
 
-    camera = lens = date_taken = time_taken = iso = shutter_speed = aperture = focal_length = None
+    camera = lens = date_taken = time_taken = iso = shutter_speed = aperture = (
+        focal_length
+    ) = None
     width = height = None
     with open(path, "rb") as f:
         tags = exifread.process_file(f, details=False)
@@ -235,15 +247,21 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         mi = MediaInfo.parse(str(path))
         for track in mi.tracks:
             if track.track_type == "General":
-                camera = (getattr(track, "model", None)
-                          or getattr(track, "writing_library", None)
-                          or getattr(track, "encoded_library_name", None))
+                camera = (
+                    getattr(track, "model", None)
+                    or getattr(track, "writing_library", None)
+                    or getattr(track, "encoded_library_name", None)
+                )
                 lens = getattr(track, "lens_model", None)
-                date_taken_full = getattr(track, "tagged_date", None) or getattr(track, "encoded_date", None)
+                date_taken_full = getattr(track, "tagged_date", None) or getattr(
+                    track, "encoded_date", None
+                )
                 if date_taken_full:
                     # MediaInfo dates often look like "2026-02-14 14:00:21" or "UTC 2026-02-14 14:00:21"
                     date_taken_full = date_taken_full.replace(" UTC", "")
-                    match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", date_taken_full)
+                    match = re.search(
+                        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", date_taken_full
+                    )
                     if match:
                         dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
                         date_taken = dt.strftime("%Y:%m:%d")
@@ -280,12 +298,15 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         "focal_length": _to_float(focal_length) if focal_length is not None else None,
         "aperture": _to_float(aperture) if aperture is not None else None,
         "iso": int(str(iso)) if iso else None,
-        "shutter_speed": str(shutter_speed) + "s" if shutter_speed is not None else None,
+        "shutter_speed": (
+            str(shutter_speed) + "s" if shutter_speed is not None else None
+        ),
         "size_bytes": size_bytes,
         "size_mb": size_mb,
         "width": int(str(width)) if width is not None else None,
         "height": int(str(height)) if height is not None else None,
     }
+
 
 def analyze_any(file_path: Path):
     image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
@@ -299,6 +320,7 @@ def analyze_any(file_path: Path):
     else:
         return "other", analyze_other(file_path)
 
+
 def analyze_directories(
     paths: List[Path],
     stop_event: Optional[threading.Event] = None,
@@ -310,7 +332,6 @@ def analyze_directories(
     all_videos = []
     all_others = []
     files_to_process = []
-
 
     def format_df(df, type_name):
         if df.empty:
@@ -355,7 +376,14 @@ def analyze_directories(
                 )
             else:
                 return pd.DataFrame(
-                    columns=["name", "filetype", "directory", "Full path", "size_bytes", "size (MB)"]
+                    columns=[
+                        "name",
+                        "filetype",
+                        "directory",
+                        "Full path",
+                        "size_bytes",
+                        "size (MB)",
+                    ]
                 )
 
         df = df.map(clean_excel_unsafe)
@@ -379,12 +407,20 @@ def analyze_directories(
         for dirpath, dir_names, filenames in os.walk(path, topdown=False):
             if stop_event and stop_event.is_set():
                 logger.warning("Directory analysis stopped by user during walk.")
-                return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
+                return (
+                    format_df(pd.DataFrame(), "image"),
+                    format_df(pd.DataFrame(), "video"),
+                    format_df(pd.DataFrame(), "other"),
+                )
 
             if pause_event:
                 while pause_event.is_set():
                     if stop_event and stop_event.is_set():
-                        return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
+                        return (
+                            format_df(pd.DataFrame(), "image"),
+                            format_df(pd.DataFrame(), "video"),
+                            format_df(pd.DataFrame(), "other"),
+                        )
                     threading.Event().wait(0.1)
 
             logger.info(f"Analyzing directory: {dirpath}")
@@ -395,9 +431,11 @@ def analyze_directories(
     total_files = len(files_to_process)
     if total_files == 0:
         logger.warning("No files found to analyze.")
-        return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
-
-
+        return (
+            format_df(pd.DataFrame(), "image"),
+            format_df(pd.DataFrame(), "video"),
+            format_df(pd.DataFrame(), "other"),
+        )
 
     logger.info(f"Extracting metadata from {total_files} files...")
     with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -405,13 +443,21 @@ def analyze_directories(
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             if stop_event and stop_event.is_set():
                 executor.shutdown(wait=False, cancel_futures=True)
-                return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
+                return (
+                    format_df(pd.DataFrame(), "image"),
+                    format_df(pd.DataFrame(), "video"),
+                    format_df(pd.DataFrame(), "other"),
+                )
 
             if pause_event:
                 while pause_event.is_set():
                     if stop_event and stop_event.is_set():
                         executor.shutdown(wait=False, cancel_futures=True)
-                        return format_df(pd.DataFrame(), "image"), format_df(pd.DataFrame(), "video"), format_df(pd.DataFrame(), "other")
+                        return (
+                            format_df(pd.DataFrame(), "image"),
+                            format_df(pd.DataFrame(), "video"),
+                            format_df(pd.DataFrame(), "other"),
+                        )
                     threading.Event().wait(0.1)
 
             category, result = future.result()
@@ -429,4 +475,8 @@ def analyze_directories(
     df_videos = pd.DataFrame(all_videos)
     df_others = pd.DataFrame(all_others)
 
-    return format_df(df_images, "image"), format_df(df_videos, "video"), format_df(df_others, "other")
+    return (
+        format_df(df_images, "image"),
+        format_df(df_videos, "video"),
+        format_df(df_others, "other"),
+    )

@@ -9,7 +9,7 @@ def export_files_table(
     others_df: pd.DataFrame,
     output_path: Path,
 ) -> None:
-    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
         to_sheet_formatted(images_df, writer, sheet_name="images", index=False)
         to_sheet_formatted(videos_df, writer, sheet_name="videos", index=False)
         to_sheet_formatted(others_df, writer, sheet_name="others", index=False)
@@ -28,15 +28,17 @@ def to_sheet_formatted(
     worksheet = writer.sheets[sheet_name]
 
     # Header format: black background, white bold text
-    header_format = workbook.add_format({
-        "bold": True,
-        "text_wrap": False,
-        "valign": "middle",
-        "align": "left",
-        "fg_color": "#000000",
-        "font_color": "#FFFFFF",
-        "border": 1,
-    })
+    header_format = workbook.add_format(
+        {
+            "bold": True,
+            "text_wrap": False,
+            "valign": "middle",
+            "align": "left",
+            "fg_color": "#000000",
+            "font_color": "#FFFFFF",
+            "border": 1,
+        }
+    )
 
     # Rewrite headers with formatting
     for col_num, column in enumerate(df.columns):
@@ -45,19 +47,20 @@ def to_sheet_formatted(
     # Create hyperlinks for 'Full path' column
     if "Full path" in df.columns:
         full_path_col_idx = df.columns.get_loc("Full path")
-        for row_num, path in enumerate(df["Full path"], 1):  # 1-based for rows after header
+        for row_num, path in enumerate(
+            df["Full path"], 1
+        ):  # 1-based for rows after header
             if pd.notna(path):
-                worksheet.write_url(row_num, full_path_col_idx, f"file:///{path}", string=str(path))
+                worksheet.write_url(
+                    row_num, full_path_col_idx, f"file:///{path}", string=str(path)
+                )
 
     # Adjust column widths
     for col_num, column in enumerate(df.columns):
         # Convert all values to string to measure length
         column_data = df[column].astype(str)
 
-        max_length = max(
-            column_data.map(len).max(),
-            len(str(column))
-        )
+        max_length = max(column_data.map(len).max(), len(str(column)))
 
         worksheet.set_column(col_num, col_num, max_length + 2)
 

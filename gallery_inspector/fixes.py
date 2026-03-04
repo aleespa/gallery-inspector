@@ -1,7 +1,6 @@
 import os
+
 import piexif
-
-
 from loguru import logger
 
 
