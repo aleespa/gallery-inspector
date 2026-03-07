@@ -19,28 +19,25 @@ import customtkinter as ctk
 from loguru import logger
 # from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from .components import MultiPathSelector, PathSelector
-from .tabs import AnalysisTab, FilterTab, OrganizeTab
+from .components import MultiPathSelector, PathSelector, StructureSelector, FilterOptionsFrame
 
 # Set appearance mode and color theme
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
 
-class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
+class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
         # self.TkdndVersion = TkinterDnD._require(self)
 
         self.title("Gallery Inspector UI")
-        self.geometry("1200x700")
+        self.geometry("1000x800")
 
         # Determine the application directory
         if getattr(sys, "frozen", False):
-            # If the application is run as a bundle (compiled with PyInstaller)
             self.app_dir = Path(sys.executable).parent
         else:
-            # If the application is run as a script
             self.app_dir = Path(__file__).resolve().parents[1]
 
         self.log_dir = self.app_dir / "logs"
@@ -48,16 +45,15 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
         self.log_file = self.log_dir / "app_log.log"
 
         logger.add(str(self.log_file), rotation="10 MB", level="DEBUG")
-        # Add a sink to redirect loguru logs to the UI log box
         logger.add(self._log_sink, level="INFO")
 
-        # Configure grid layout
-        self.grid_columnconfigure(0, weight=1)  # Left column (Selectors)
-        self.grid_columnconfigure(1, weight=2)  # Right column (Tabs)
-        self.grid_rowconfigure(0, weight=1)  # Main content
-        self.grid_rowconfigure(2, weight=0)  # Log box (collapsible)
+        # ── Root grid ───────────────────────────────────────────────────────
+        self.grid_columnconfigure(0, weight=1)  # Left column  (paths)
+        self.grid_columnconfigure(1, weight=2)  # Right column (options)
+        self.grid_rowconfigure(0, weight=1)     # Main content
+        self.grid_rowconfigure(1, weight=0)     # Log bar
 
-        # Left Column: Selectors
+        # ── Left Column: path selectors ──────────────────────────────────────
         self.left_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.left_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         self.left_frame.grid_columnconfigure(0, weight=1)
@@ -68,32 +64,133 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
 
         self.input_selector = MultiPathSelector(self.left_frame, "Input Directories:")
         self.input_selector.grid(row=1, column=0, sticky="ew", pady=10)
-        # self.input_selector.setup_dnd(self)
 
         self.output_selector = PathSelector(
             self.left_frame, "Output Directory:", self.browse_directory
         )
         self.output_selector.grid(row=2, column=0, sticky="ew", pady=10)
 
-        # Right Column: Tabview
-        self.tabview = ctk.CTkTabview(self)
-        self.tabview.grid(row=0, column=1, padx=20, pady=(20, 10), sticky="nsew")
-        self.tabview.grid_propagate(False)
+        # ── Right Column: scrollable options + action buttons ────────────────
+        self.right_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.right_frame.grid(row=0, column=1, padx=20, pady=(20, 10), sticky="nsew")
+        self.right_frame.grid_columnconfigure(0, weight=1)
+        self.right_frame.grid_rowconfigure(0, weight=1)   # scrollable expands
+        self.right_frame.grid_rowconfigure(1, weight=0)   # button bar fixed
 
-        self.tab_organize = self.tabview.add("Organize")
-        self.tab_analysis = self.tabview.add("Analysis")
-        self.tab_filter = self.tabview.add("Filtering")
+        # Scrollable options area
+        self.scroll_container = ctk.CTkScrollableFrame(
+            self.right_frame, fg_color="transparent"
+        )
+        self.scroll_container.grid(row=0, column=0, sticky="nsew")
+        self.scroll_container.grid_columnconfigure(0, weight=1)
 
-        self.analysis_view = AnalysisTab(self.tab_analysis, self)
-        self.analysis_view.pack(fill="both", expand=True)
+        # ── Section 1: Output Options (Options dataclass) ────────────────────
+        ctk.CTkLabel(
+            self.scroll_container,
+            text="Output Options",
+            font=("Arial", 14, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=20, pady=(16, 4))
 
-        self.filter_view = FilterTab(self.tab_filter, self)
-        self.filter_view.pack(fill="both", expand=True)
+        self.output_options_frame = ctk.CTkFrame(
+            self.scroll_container, fg_color="transparent"
+        )
+        self.output_options_frame.grid(
+            row=1, column=0, sticky="ew", padx=20, pady=(0, 10)
+        )
+        self.output_options_frame.grid_columnconfigure((0, 1), weight=1)
 
-        self.organize_view = OrganizeTab(self.tab_organize, self)
-        self.organize_view.pack(fill="both", expand=True)
+        self.by_media_type_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            self.output_options_frame,
+            text="Separate by Media Type (Photos/Videos)",
+            variable=self.by_media_type_var,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=5)
 
-        # Log Section
+        self.structure_selector = StructureSelector(
+            self.output_options_frame,
+            available_options=["Year", "Month", "Model", "Lens"],
+            initial_selection=["Year", "Month"],
+        )
+        self.structure_selector.grid(row=1, column=0, columnspan=2, sticky="ew", pady=10)
+
+        ctk.CTkLabel(self.output_options_frame, text="On Conflict:").grid(
+            row=2, column=0, sticky="w", pady=5
+        )
+        self.on_exist_var = ctk.StringVar(value="rename")
+        ctk.CTkComboBox(
+            self.output_options_frame,
+            values=["rename", "skip"],
+            variable=self.on_exist_var,
+        ).grid(row=2, column=1, sticky="ew", pady=5, padx=(10, 0))
+
+        self.verbose_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            self.output_options_frame,
+            text="Verbose Logging",
+            variable=self.verbose_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=5)
+
+        # ── Section 2: Filter Options (FilterOptions dataclass) ──────────────
+        ctk.CTkLabel(
+            self.scroll_container,
+            text="Filter Options",
+            font=("Arial", 14, "bold"),
+            anchor="w",
+        ).grid(row=2, column=0, sticky="w", padx=20, pady=(16, 4))
+
+        self.filter_options_frame = FilterOptionsFrame(self.scroll_container)
+        self.filter_options_frame.grid(
+            row=3, column=0, sticky="ew", padx=20, pady=(0, 16)
+        )
+
+        # ── Action button bar ────────────────────────────────────────────────
+        self.button_bar = ctk.CTkFrame(self.right_frame, fg_color="transparent")
+        self.button_bar.grid(row=1, column=0, pady=(10, 20))
+
+        self.analysis_button = ctk.CTkButton(
+            self.button_bar,
+            text="Run Analysis",
+            command=lambda: self.run_process("analysis"),
+            fg_color="#2e7d32",
+            hover_color="#1b5e20",
+            height=40,
+            width=150,
+        )
+        self.analysis_button.grid(row=0, column=0, padx=5)
+
+        self.filter_button = ctk.CTkButton(
+            self.button_bar,
+            text="Start Filtering",
+            command=lambda: self.run_process("filter"),
+            fg_color="#1565c0",
+            hover_color="#0d47a1",
+            height=40,
+            width=150,
+        )
+        self.filter_button.grid(row=0, column=1, padx=5)
+
+        self.pause_button = ctk.CTkButton(
+            self.button_bar,
+            text="⏸",
+            width=40,
+            height=40,
+            command=self.toggle_pause,
+            fg_color="#3b8ed0",
+            hover_color="#36719f",
+        )
+        self.stop_button = ctk.CTkButton(
+            self.button_bar,
+            text="⏹",
+            width=40,
+            height=40,
+            command=self.stop_process,
+            fg_color="#ff4a4c",
+            hover_color="#933032",
+        )
+        # pause/stop are shown only while a process is running
+
+        # ── Log Section (collapsible) ────────────────────────────────────────
         self.log_container = ctk.CTkFrame(self)
         self.log_container.grid(row=1, column=0, columnspan=2, padx=20, sticky="ew")
         self.log_container.grid_columnconfigure(0, weight=1)
@@ -106,7 +203,10 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
             row=0, column=0, sticky="w"
         )
         self.log_toggle_btn = ctk.CTkButton(
-            self.log_header_frame, text="Show Logs", width=80, command=self.toggle_logs
+            self.log_header_frame,
+            text="Show Logs",
+            width=80,
+            command=self.toggle_logs,
         )
         self.log_toggle_btn.grid(row=0, column=1, sticky="e")
 
@@ -114,57 +214,48 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
         self.log_textbox.configure(state="disabled")
         self.log_visible = False
 
-        # Status Label (bottom)
+        # ── Status / Progress ────────────────────────────────────────────────
         self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
         self.status_label.grid(row=2, column=0, columnspan=2, pady=(0, 5))
 
-        # Progress Bar
         self.progress_bar = ctk.CTkProgressBar(self, width=400)
         self.progress_bar.grid(row=3, column=0, columnspan=2, pady=(0, 10))
         self.progress_bar.set(0)
-        self.progress_bar.grid_remove()  # Hide initially
+        self.progress_bar.grid_remove()
 
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
+        self._active_btn = None  # tracks which action button started the current run
 
-    def get_current_tab(self):
-        tab_name = self.tabview.get()
-        if tab_name == "Analysis":
-            return self.analysis_view
-        elif tab_name == "Filtering":
-            return self.filter_view
-        else:
-            return self.organize_view
+    # ── Process control ──────────────────────────────────────────────────────
 
     def stop_process(self):
         if self.stop_event:
             self.stop_event.set()
             logger.warning("Stop requested by user...")
             self.status_label.configure(text="Stopping...", text_color="red")
-            tab = self.get_current_tab()
-            tab.stop_button.configure(state="disabled")
-            tab.pause_button.configure(state="disabled")
+            self.stop_button.configure(state="disabled")
+            self.pause_button.configure(state="disabled")
 
     def toggle_pause(self):
-        tab = self.get_current_tab()
         if self.pause_event.is_set():
             self.pause_event.clear()
-            tab.pause_button.configure(text="⏸")
+            self.pause_button.configure(text="⏸")
             self.status_label.configure(text="Resuming...", text_color="orange")
             logger.info("Process resumed.")
         else:
             self.pause_event.set()
-            tab.pause_button.configure(text="▶")
+            self.pause_button.configure(text="▶")
             self.status_label.configure(text="Paused", text_color="yellow")
             logger.info("Process paused.")
 
+    # ── Logging ──────────────────────────────────────────────────────────────
+
     def _log_sink(self, message):
-        # loguru messages can be serialized or objects, we want the formatted string
         record = message.record
         level = record["level"].name
         msg = record["message"]
-        formatted_msg = f"[{level}] {msg}"
-        self.after(0, lambda: self.log_message(formatted_msg))
+        self.after(0, lambda: self.log_message(f"[{level}] {msg}"))
 
     def toggle_logs(self):
         if self.log_visible:
@@ -184,6 +275,8 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
         self.log_textbox.see(tk.END)
         self.log_textbox.configure(state="disabled")
 
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
     def browse_directory(self, entry):
         directory = filedialog.askdirectory()
         if directory:
@@ -194,13 +287,22 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
     def update_progress(self, value):
         self.after(0, lambda: self.progress_bar.set(value))
 
+    def get_output_options(self):
+        from gallery_inspector.generate import Options
+        return Options(
+            by_media_type=self.by_media_type_var.get(),
+            structure=self.structure_selector.get(),
+            on_exist=self.on_exist_var.get(),
+            verbose=self.verbose_var.get(),
+        )
+
+    def get_filter_query(self):
+        return self.filter_options_frame.get_query()
+
+    # ── Run ──────────────────────────────────────────────────────────────────
+
     def run_process(self, func):
-        if func == "analysis":
-            btn = self.analysis_view.run_button
-        elif func == "filter":
-            btn = self.filter_view.run_button
-        else:  # create
-            btn = self.organize_view.run_button
+        btn = self.analysis_button if func == "analysis" else self.filter_button
 
         input_paths = self.input_selector.get_paths()
         output_path = self.output_selector.get()
@@ -213,21 +315,21 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
             return
 
         btn.configure(state="disabled")
+        self._active_btn = btn
         self.stop_event.clear()
         self.pause_event.clear()
 
-        tab = self.get_current_tab()
-        tab.pause_button.configure(text="⏸", state="normal")
-        tab.pause_button.grid(row=0, column=1, padx=5)
-        tab.stop_button.configure(state="normal")
-        tab.stop_button.grid(row=0, column=2, padx=5)
+        # Show pause / stop buttons
+        self.pause_button.configure(text="⏸", state="normal")
+        self.pause_button.grid(row=0, column=2, padx=5)
+        self.stop_button.configure(state="normal")
+        self.stop_button.grid(row=0, column=3, padx=5)
 
         self.status_label.configure(text=f"Processing {func}...", text_color="orange")
         self.progress_bar.set(0)
-        self.progress_bar.grid()  # Show progress bar
+        self.progress_bar.grid()
         logger.info(f"START: {func.capitalize()} process initiated.")
 
-        # Run in a separate thread to keep UI responsive
         threading.Thread(
             target=self.execute, args=(func, input_paths, output_path, btn), daemon=True
         ).start()
@@ -235,8 +337,8 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
     def execute(self, func, input_paths, output_path, btn):  # noqa: C901
         from gallery_inspector.filtering import filter_files
         from gallery_inspector.export import export_files_table
-        from gallery_inspector.generate import Options, generated_directory
         from gallery_inspector.analysis import analyze_directories
+
         try:
             input_ps = [Path(p) for p in input_paths]
             output_p = Path(output_path)
@@ -256,21 +358,21 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
                 output_file = output_p / f"analysis_{name_date}.xlsx"
                 export_files_table(df_images, df_videos, df_others, output_file)
                 msg = f"Analysis complete. Results saved to {output_file}"
-            elif func == "filter":
-                query = self.filter_view.get_filter_query()
-                output_options_dict = self.filter_view.get_output_options()
-                output_options = Options(**output_options_dict)
-                
-                all_files = []
-                for p in input_ps:
-                    for file in p.rglob("*"):
-                        if not file.is_dir():
-                            all_files.append(file)
 
+            elif func == "filter":
+                query = self.get_filter_query()
+                options = self.get_output_options()
+
+                all_files = [
+                    file
+                    for p in input_ps
+                    for file in p.rglob("*")
+                    if not file.is_dir()
+                ]
                 filter_files(
                     all_files,
                     output_p,
-                    output_options,
+                    options,
                     query,
                     stop_event=self.stop_event,
                     pause_event=self.pause_event,
@@ -281,22 +383,6 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
                 msg = f"Filtering complete. Filtered files organized in {output_p}"
-            elif func == "create":
-                options_dict = self.organize_view.get_options()
-                options = Options(**options_dict)
-                generated_directory(
-                    input_ps,
-                    output_p,
-                    options,
-                    stop_event=self.stop_event,
-                    pause_event=self.pause_event,
-                    progress_callback=self.update_progress,
-                )
-                if self.stop_event.is_set():
-                    logger.warning("Organization cancelled by user.")
-                    self.after(0, lambda: self.finish_stopped(btn))
-                    return
-                msg = f"Organization complete. Files organized in {output_p}"
 
             logger.info(msg)
             self.after(0, lambda: self.finish_success(msg, btn))
@@ -308,29 +394,23 @@ class GalleryInspectorUI(ctk.CTk): #, TkinterDnD.DnDWrapper):
                 logger.exception(f"Unexpected error: {err_msg}")
                 self.after(0, lambda: self.finish_error(err_msg, btn))
 
-    def finish_success(self, msg, btn):
+    def _hide_run_controls(self, btn):
         btn.configure(state="normal")
-        tab = self.get_current_tab()
-        tab.stop_button.grid_forget()
-        tab.pause_button.grid_forget()
+        self.pause_button.grid_forget()
+        self.stop_button.grid_forget()
         self.progress_bar.grid_remove()
+
+    def finish_success(self, msg, btn):
+        self._hide_run_controls(btn)
         self.status_label.configure(text="Success!", text_color="green")
         messagebox.showinfo("Success", msg)
 
     def finish_error(self, err, btn):
-        btn.configure(state="normal")
-        tab = self.get_current_tab()
-        tab.stop_button.grid_forget()
-        tab.pause_button.grid_forget()
-        self.progress_bar.grid_remove()
+        self._hide_run_controls(btn)
         self.status_label.configure(text="Error occurred", text_color="red")
         messagebox.showerror("Error", f"An error occurred: {err}")
 
     def finish_stopped(self, btn):
-        btn.configure(state="normal")
-        tab = self.get_current_tab()
-        tab.stop_button.grid_forget()
-        tab.pause_button.grid_forget()
-        self.progress_bar.grid_remove()
+        self._hide_run_controls(btn)
         self.status_label.configure(text="Stopped", text_color="red")
         messagebox.showwarning("Stopped", "Process was stopped by user.")
