@@ -258,33 +258,201 @@ def analyze_raw(path: Path) -> Optional[Dict]:
                 )
                 if date_taken_full:
                     # MediaInfo dates often look like "2026-02-14 14:00:21" or "UTC 2026-02-14 14:00:21"
-                    date_taken_full = date_taken_full.replace(" UTC", "")
-                    match = re.search(
-                        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", date_taken_full
-                    )
-                    if match:
-                        dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-                        date_taken = dt.strftime("%Y:%m:%d")
-                        time_taken = dt.strftime("%H:%M:%S")
-            elif track.track_type == "Video":
-                width = track.width
-                height = track.height
-                # Exposure parameters in CR3 (ISO, etc.) are sometimes in the 'General' or 'Video' track metadata
-                # but often complex to find. MediaInfo provides some.
-                # Let's try to get what we can.
-                # For CR3, sometimes tags like 'f_number', 'exposure_time' are available
-                focal_length = getattr(track, "focal_length", None)
-                aperture = getattr(track, "f_number", None)
-                iso = getattr(track, "iso", None)
-                shutter_speed = getattr(track, "exposure_time", None)
+                    # We want to normalize to "YYYY:MM:DD HH:MM:SS" if possible for date_taken
+                    # but for now let's just extract time.
+                    date_taken_clean = date_taken_full.replace("UTC", "").strip()
+                    if " " in date_taken_clean:
+                        date_taken, time_taken = date_taken_clean.split(" ", 1)
+                        # Normalize date from YYYY-MM-DD to YYYY:MM:DD if it was from MediaInfo
+                        date_taken = date_taken.replace("-", ":")
+                    else:
+                        date_taken = date_taken_clean.replace("-", ":")
 
-    def _to_float(v):
-        if v is None:
-            return None
+                iso = getattr(track, "ISO", None)
+                aperture = getattr(track, "FNumber", None)
+                shutter_speed = getattr(track, "ExposureTime", None)
+                focal_length = getattr(track, "FocalLength", None)
+            elif track.track_type == "Video":
+                if width is None or (track.width and track.width > width):
+                    width = track.width
+                if height is None or (track.height and track.height > height):
+                    height = track.height
+
+        # Fallback for camera, lens, date, and other EXIF tags using raw byte search and exifread
         try:
-            return float(str(v))
-        except (ValueError, TypeError):
-            return None
+            with open(path, "rb") as f:
+                # CR3 files often have metadata near the beginning
+                head = f.read(100000)
+
+                # Try to use exifread by finding TIFF headers
+                # CR3 is ISO BMFF, and it contains multiple TIFF-based metadata blocks
+                for header in [b"II\x2a\x00", b"MM\x00\x2a"]:
+                    idx = head.find(header)
+                    while idx != -1:
+                        import io
+
+                        f_tiff = io.BytesIO(head[idx:])
+                        tags = exifread.process_file(f_tiff, details=False)
+                        if tags:
+                            if not camera:
+                                camera = _decode_if_bytes(tags.get("Image Model"))
+                            if not lens:
+                                lens = _decode_if_bytes(
+                                    tags.get("EXIF LensModel")
+                                    or tags.get("Image LensModel")
+                                )
+                            if not date_taken:
+                                date_taken_full = _decode_if_bytes(
+                                    tags.get("EXIF DateTimeOriginal")
+                                    or tags.get("Image DateTime")
+                                )
+                                if date_taken_full and " " in date_taken_full:
+                                    date_taken, time_taken = date_taken_full.split(
+                                        " ", 1
+                                    )
+                                elif date_taken_full:
+                                    date_taken = date_taken_full
+
+                            if not iso:
+                                iso = tags.get("EXIF ISOSpeedRatings") or tags.get(
+                                    "Image ISOSpeedRatings"
+                                )
+                            # Aperture: prefer sensible numeric value
+                            cand_ap = _rational_to_float(
+                                tags.get("EXIF FNumber") or tags.get("Image FNumber")
+                            )
+                            if cand_ap:
+                                aperture = cand_ap
+                            # Shutter speed: prefer a clean fractional like '1/2000'
+                            exp_val = tags.get("EXIF ExposureTime") or tags.get(
+                                "Image ExposureTime"
+                            )
+                            if exp_val:
+                                cand_ss = str(exp_val)
+                                if (not shutter_speed) or (
+                                    not str(shutter_speed).startswith("1/")
+                                    and cand_ss.startswith("1/")
+                                ):
+                                    shutter_speed = cand_ss
+                            # Focal length
+                            cand_fl = _rational_to_float(
+                                tags.get("EXIF FocalLength")
+                                or tags.get("Image FocalLength")
+                            )
+                            if cand_fl:
+                                focal_length = cand_fl
+
+                            if not width:
+                                width = tags.get("EXIF ExifImageWidth") or tags.get(
+                                    "Image ImageWidth"
+                                )
+                            if not height:
+                                height = tags.get("EXIF ExifImageLength") or tags.get(
+                                    "Image ImageLength"
+                                )
+
+                        # Continue scanning all possible TIFF blocks; some early blocks contain placeholder values
+                        idx = head.find(header, idx + 1)
+                    # Do not break early; later blocks may contain the real EXIF values
+
+                # Additional fallback for strings if still missing
+                if not camera:
+                    idx = head.find(b"Canon EOS ")
+                    if idx != -1:
+                        cam_bytes = head[idx:]
+                        null_idx = cam_bytes.find(b"\x00")
+                        if null_idx != -1:
+                            cam_str = cam_bytes[:null_idx].decode(
+                                "utf-8", errors="ignore"
+                            )
+                            if cam_str.startswith("Canon "):
+                                camera = cam_str[6:]
+                            else:
+                                camera = cam_str
+
+                if not lens:
+                    # Look for common lens patterns or specific LensModel tag
+                    # Many Canon lenses start with EF or RF
+                    for pattern in [b"RF", b"EF"]:
+                        idx = head.find(pattern)
+                        if idx != -1:
+                            lens_bytes = head[idx:]
+                            null_idx = lens_bytes.find(b"\x00")
+                            if null_idx != -1:
+                                lens = lens_bytes[:null_idx].decode(
+                                    "utf-8", errors="ignore"
+                                )
+                                break
+
+                if not date_taken:
+                    # Search for date pattern YYYY:MM:DD HH:MM:SS
+                    m = re.search(rb"(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})", head)
+                    if m:
+                        date_taken = m.group(1).decode("utf-8")
+        except Exception:
+            pass
+
+        # Normalize date format
+        if date_taken:
+            date_taken = str(date_taken)
+            date_taken = re.sub(r" UTC$", "", date_taken)
+            # Try YYYY-MM-DD HH:MM:SS
+            m = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", date_taken)
+            if m:
+                dt_obj = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                date_taken = dt_obj.strftime("%Y:%m:%d %H:%M:%S")
+            else:
+                # Try YYYY:MM:DD HH:MM:SS (already in correct format)
+                m2 = re.search(r"(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})", date_taken)
+                if m2:
+                    date_taken = m2.group(1)
+
+        # Normalize shutter speed (remove trailing 's')
+        if shutter_speed:
+            shutter_speed = str(shutter_speed).rstrip("s")
+
+        # Normalize ISO
+        if iso:
+            try:
+                iso = int(str(iso))
+            except Exception:
+                iso = None
+
+        # Ensure aperture/focal_length are floats when possible
+        if isinstance(aperture, str):
+            try:
+                aperture = float(aperture)
+            except Exception:
+                pass
+        if isinstance(focal_length, str):
+            try:
+                focal_length = float(focal_length)
+            except Exception:
+                pass
+        # Convert Ratio-like objects to float using helper
+        if focal_length is not None and not isinstance(focal_length, (int, float)):
+            try:
+                focal_length = _rational_to_float(focal_length)
+            except Exception:
+                pass
+
+    # Final normalization just before returning
+    def _to_float(v):
+        if isinstance(v, (int, float)):
+            return float(v)
+        # exifread Tag may wrap the underlying Ratio/number in .values
+        if hasattr(v, "values"):
+            try:
+                return float(v.values[0])
+            except Exception:
+                pass
+        try:
+            return _rational_to_float(v)
+        except Exception:
+            try:
+                return float(str(v))
+            except Exception:
+                return v
 
     return {
         "name": name,
