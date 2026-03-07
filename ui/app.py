@@ -17,22 +17,38 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 from loguru import logger
+
 # from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from .components import MultiPathSelector, PathSelector, StructureSelector, FilterOptionsFrame
-
-# Set appearance mode and color theme
-ctk.set_appearance_mode("System")
-ctk.set_default_color_theme("blue")
+from .theme import theme as _default_theme
+from .components import (
+    MultiPathSelector,
+    PathSelector,
+    StructureSelector,
+    FilterOptionsFrame,
+)
 
 
 class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
+    """Main application window.
+
+    Swap ``GalleryInspectorUI.theme`` for a custom :class:`~ui.theme.Theme`
+    instance *before* calling ``__init__`` to restyle the entire UI.
+    """
+
+    # ── Active theme ──────────────────────────────────────────────────────────
+    theme = _default_theme
+
     def __init__(self):
+        # Apply appearance settings from the theme before creating the window
+        ctk.set_appearance_mode(self.theme.appearance_mode)
+        ctk.set_default_color_theme(self.theme.color_theme)
+
         super().__init__()
         # self.TkdndVersion = TkinterDnD._require(self)
 
         self.title("Gallery Inspector UI")
-        self.geometry("1000x800")
+        self.geometry(self.theme.window_geometry)
 
         # Determine the application directory
         if getattr(sys, "frozen", False):
@@ -47,20 +63,22 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         logger.add(str(self.log_file), rotation="10 MB", level="DEBUG")
         logger.add(self._log_sink, level="INFO")
 
-        # ── Root grid ───────────────────────────────────────────────────────
+        t = self.theme  # shorthand used throughout __init__
+
+        # ── Root grid ─────────────────────────────────────────────────────────
         self.grid_columnconfigure(0, weight=1)  # Left column  (paths)
         self.grid_columnconfigure(1, weight=2)  # Right column (options)
-        self.grid_rowconfigure(0, weight=1)     # Main content
-        self.grid_rowconfigure(1, weight=0)     # Log bar
+        self.grid_rowconfigure(0, weight=1)  # Main content
+        self.grid_rowconfigure(1, weight=0)  # Log bar
 
-        # ── Left Column: path selectors ──────────────────────────────────────
+        # ── Left Column: path selectors ───────────────────────────────────────
         self.left_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.left_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         self.left_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            self.left_frame, text="Project Paths", font=("Arial", 18, "bold")
-        ).grid(row=0, column=0, pady=(0, 20), sticky="w")
+        ctk.CTkLabel(self.left_frame, text="Project Paths", font=t.font_title).grid(
+            row=0, column=0, pady=(0, 20), sticky="w"
+        )
 
         self.input_selector = MultiPathSelector(self.left_frame, "Input Directories:")
         self.input_selector.grid(row=1, column=0, sticky="ew", pady=10)
@@ -70,12 +88,12 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         )
         self.output_selector.grid(row=2, column=0, sticky="ew", pady=10)
 
-        # ── Right Column: scrollable options + action buttons ────────────────
+        # ── Right Column: scrollable options + action buttons ─────────────────
         self.right_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.right_frame.grid(row=0, column=1, padx=20, pady=(20, 10), sticky="nsew")
         self.right_frame.grid_columnconfigure(0, weight=1)
-        self.right_frame.grid_rowconfigure(0, weight=1)   # scrollable expands
-        self.right_frame.grid_rowconfigure(1, weight=0)   # button bar fixed
+        self.right_frame.grid_rowconfigure(0, weight=1)  # scrollable expands
+        self.right_frame.grid_rowconfigure(1, weight=0)  # button bar fixed
 
         # Scrollable options area
         self.scroll_container = ctk.CTkScrollableFrame(
@@ -84,11 +102,11 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         self.scroll_container.grid(row=0, column=0, sticky="nsew")
         self.scroll_container.grid_columnconfigure(0, weight=1)
 
-        # ── Section 1: Output Options (Options dataclass) ────────────────────
+        # ── Section 1: Output Options (Options dataclass) ─────────────────────
         ctk.CTkLabel(
             self.scroll_container,
             text="Output Options",
-            font=("Arial", 14, "bold"),
+            font=t.font_section,
             anchor="w",
         ).grid(row=0, column=0, sticky="w", padx=20, pady=(16, 4))
 
@@ -112,7 +130,9 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
             available_options=["Year", "Month", "Model", "Lens"],
             initial_selection=["Year", "Month"],
         )
-        self.structure_selector.grid(row=1, column=0, columnspan=2, sticky="ew", pady=10)
+        self.structure_selector.grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=10
+        )
 
         ctk.CTkLabel(self.output_options_frame, text="On Conflict:").grid(
             row=2, column=0, sticky="w", pady=5
@@ -120,7 +140,7 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         self.on_exist_var = ctk.StringVar(value="rename")
         ctk.CTkComboBox(
             self.output_options_frame,
-            values=["rename", "skip"],
+            values=["Rename", "Skip"],
             variable=self.on_exist_var,
         ).grid(row=2, column=1, sticky="ew", pady=5, padx=(10, 0))
 
@@ -131,11 +151,11 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
             variable=self.verbose_var,
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=5)
 
-        # ── Section 2: Filter Options (FilterOptions dataclass) ──────────────
+        # ── Section 2: Filter Options (FilterOptions dataclass) ───────────────
         ctk.CTkLabel(
             self.scroll_container,
-            text="Filter Options",
-            font=("Arial", 14, "bold"),
+            text="Select:",
+            font=t.font_section,
             anchor="w",
         ).grid(row=2, column=0, sticky="w", padx=20, pady=(16, 4))
 
@@ -144,7 +164,7 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
             row=3, column=0, sticky="ew", padx=20, pady=(0, 16)
         )
 
-        # ── Action button bar ────────────────────────────────────────────────
+        # ── Action button bar ─────────────────────────────────────────────────
         self.button_bar = ctk.CTkFrame(self.right_frame, fg_color="transparent")
         self.button_bar.grid(row=1, column=0, pady=(10, 20))
 
@@ -152,10 +172,10 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
             self.button_bar,
             text="Run Analysis",
             command=lambda: self.run_process("analysis"),
-            fg_color="#2e7d32",
-            hover_color="#1b5e20",
-            height=40,
-            width=150,
+            fg_color=t.btn_analysis_fg,
+            hover_color=t.btn_analysis_hover,
+            height=t.btn_action_height,
+            width=t.btn_action_width,
         )
         self.analysis_button.grid(row=0, column=0, padx=5)
 
@@ -163,34 +183,34 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
             self.button_bar,
             text="Start Filtering",
             command=lambda: self.run_process("filter"),
-            fg_color="#1565c0",
-            hover_color="#0d47a1",
-            height=40,
-            width=150,
+            fg_color=t.btn_filter_fg,
+            hover_color=t.btn_filter_hover,
+            height=t.btn_action_height,
+            width=t.btn_action_width,
         )
         self.filter_button.grid(row=0, column=1, padx=5)
 
         self.pause_button = ctk.CTkButton(
             self.button_bar,
             text="⏸",
-            width=40,
-            height=40,
+            width=t.btn_icon_size,
+            height=t.btn_icon_size,
             command=self.toggle_pause,
-            fg_color="#3b8ed0",
-            hover_color="#36719f",
+            fg_color=t.btn_pause_fg,
+            hover_color=t.btn_pause_hover,
         )
         self.stop_button = ctk.CTkButton(
             self.button_bar,
             text="⏹",
-            width=40,
-            height=40,
+            width=t.btn_icon_size,
+            height=t.btn_icon_size,
             command=self.stop_process,
-            fg_color="#ff4a4c",
-            hover_color="#933032",
+            fg_color=t.btn_stop_fg,
+            hover_color=t.btn_stop_hover,
         )
         # pause/stop are shown only while a process is running
 
-        # ── Log Section (collapsible) ────────────────────────────────────────
+        # ── Log Section (collapsible) ─────────────────────────────────────────
         self.log_container = ctk.CTkFrame(self)
         self.log_container.grid(row=1, column=0, columnspan=2, padx=20, sticky="ew")
         self.log_container.grid_columnconfigure(0, weight=1)
@@ -205,35 +225,41 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         self.log_toggle_btn = ctk.CTkButton(
             self.log_header_frame,
             text="Show Logs",
-            width=80,
+            width=t.btn_logs_width,
             command=self.toggle_logs,
+            fg_color=t.btn_logs_fg,
+            hover_color=t.btn_logs_hover,
         )
         self.log_toggle_btn.grid(row=0, column=1, sticky="e")
 
-        self.log_textbox = ctk.CTkTextbox(self.log_container, height=150)
+        self.log_textbox = ctk.CTkTextbox(
+            self.log_container, height=t.log_textbox_height
+        )
         self.log_textbox.configure(state="disabled")
         self.log_visible = False
 
-        # ── Status / Progress ────────────────────────────────────────────────
-        self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
+        # ── Status / Progress ─────────────────────────────────────────────────
+        self.status_label = ctk.CTkLabel(self, text="Ready", text_color=t.status_ready)
         self.status_label.grid(row=2, column=0, columnspan=2, pady=(0, 5))
 
-        self.progress_bar = ctk.CTkProgressBar(self, width=400)
+        self.progress_bar = ctk.CTkProgressBar(self, width=t.progress_bar_width)
         self.progress_bar.grid(row=3, column=0, columnspan=2, pady=(0, 10))
         self.progress_bar.set(0)
         self.progress_bar.grid_remove()
 
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
-        self._active_btn = None  # tracks which action button started the current run
+        self._active_btn = None
 
-    # ── Process control ──────────────────────────────────────────────────────
+    # ── Process control ───────────────────────────────────────────────────────
 
     def stop_process(self):
         if self.stop_event:
             self.stop_event.set()
             logger.warning("Stop requested by user...")
-            self.status_label.configure(text="Stopping...", text_color="red")
+            self.status_label.configure(
+                text="Stopping...", text_color=self.theme.status_stopped
+            )
             self.stop_button.configure(state="disabled")
             self.pause_button.configure(state="disabled")
 
@@ -241,15 +267,19 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         if self.pause_event.is_set():
             self.pause_event.clear()
             self.pause_button.configure(text="⏸")
-            self.status_label.configure(text="Resuming...", text_color="orange")
+            self.status_label.configure(
+                text="Resuming...", text_color=self.theme.status_running
+            )
             logger.info("Process resumed.")
         else:
             self.pause_event.set()
             self.pause_button.configure(text="▶")
-            self.status_label.configure(text="Paused", text_color="yellow")
+            self.status_label.configure(
+                text="Paused", text_color=self.theme.status_paused
+            )
             logger.info("Process paused.")
 
-    # ── Logging ──────────────────────────────────────────────────────────────
+    # ── Logging ───────────────────────────────────────────────────────────────
 
     def _log_sink(self, message):
         record = message.record
@@ -275,7 +305,7 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         self.log_textbox.see(tk.END)
         self.log_textbox.configure(state="disabled")
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def browse_directory(self, entry):
         directory = filedialog.askdirectory()
@@ -289,17 +319,18 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
 
     def get_output_options(self):
         from gallery_inspector.generate import Options
+
         return Options(
             by_media_type=self.by_media_type_var.get(),
             structure=self.structure_selector.get(),
-            on_exist=self.on_exist_var.get(),
+            on_exist=self.on_exist_var.get().lower(),
             verbose=self.verbose_var.get(),
         )
 
     def get_filter_query(self):
         return self.filter_options_frame.get_query()
 
-    # ── Run ──────────────────────────────────────────────────────────────────
+    # ── Run ───────────────────────────────────────────────────────────────────
 
     def run_process(self, func):
         btn = self.analysis_button if func == "analysis" else self.filter_button
@@ -325,7 +356,9 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         self.stop_button.configure(state="normal")
         self.stop_button.grid(row=0, column=3, padx=5)
 
-        self.status_label.configure(text=f"Processing {func}...", text_color="orange")
+        self.status_label.configure(
+            text=f"Processing {func}...", text_color=self.theme.status_running
+        )
         self.progress_bar.set(0)
         self.progress_bar.grid()
         logger.info(f"START: {func.capitalize()} process initiated.")
@@ -364,10 +397,7 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
                 options = self.get_output_options()
 
                 all_files = [
-                    file
-                    for p in input_ps
-                    for file in p.rglob("*")
-                    if not file.is_dir()
+                    file for p in input_ps for file in p.rglob("*") if not file.is_dir()
                 ]
                 filter_files(
                     all_files,
@@ -402,15 +432,21 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
 
     def finish_success(self, msg, btn):
         self._hide_run_controls(btn)
-        self.status_label.configure(text="Success!", text_color="green")
+        self.status_label.configure(
+            text="Success!", text_color=self.theme.status_success
+        )
         messagebox.showinfo("Success", msg)
 
     def finish_error(self, err, btn):
         self._hide_run_controls(btn)
-        self.status_label.configure(text="Error occurred", text_color="red")
+        self.status_label.configure(
+            text="Error occurred", text_color=self.theme.status_error
+        )
         messagebox.showerror("Error", f"An error occurred: {err}")
 
     def finish_stopped(self, btn):
         self._hide_run_controls(btn)
-        self.status_label.configure(text="Stopped", text_color="red")
+        self.status_label.configure(
+            text="Stopped", text_color=self.theme.status_stopped
+        )
         messagebox.showwarning("Stopped", "Process was stopped by user.")
