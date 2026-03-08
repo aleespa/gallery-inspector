@@ -30,6 +30,10 @@ class TestFigures(unittest.TestCase):
             "images_cameras.png",
             "images_lenses.png",
             "images_settings.png",
+            "images_monthly_camera.png",
+            "images_monthly_lens.png",
+            "images_yearly_camera.png",
+            "images_yearly_lens.png",
             "locations_heatmap.png",
             "locations_map.png"
         }
