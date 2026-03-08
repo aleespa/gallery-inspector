@@ -388,9 +388,22 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
                     self.after(0, lambda: self.finish_stopped(btn))
                     return
                 name_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                output_file = output_p / f"analysis_{name_date}.xlsx"
+                analysis_dir = output_p / f"Analysis {name_date}"
+                analysis_dir.mkdir(parents=True, exist_ok=True)
+                
+                output_file = analysis_dir / "Metadata.xlsx"
                 export_files_table(df_images, df_videos, df_others, output_file)
-                msg = f"Analysis complete. Results saved to {output_file}"
+                
+                figures_dir = analysis_dir / "Figures"
+                figures_dir.mkdir(parents=True, exist_ok=True)
+                
+                try:
+                    from gallery_inspector.figures import generate_plots
+                    generate_plots(output_file, figures_dir)
+                except Exception as e:
+                    logger.error(f"Failed to generate plots: {e}")
+                
+                msg = f"Analysis complete. Results saved to {analysis_dir}"
 
             elif func == "filter":
                 query = self.get_filter_query()

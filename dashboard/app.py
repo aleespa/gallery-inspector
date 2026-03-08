@@ -12,13 +12,14 @@ from gallery_inspector.generate import (
     generated_directory_from_list,
     Options,
 )
-from gallery_inspector.figures import (
-    plot_interactive_timeline,
-    plot_sunburst,
-    plot_scatter,
-    plot_file_types,
-    plot_size_distribution,
-)
+# The plotting functions below were replaced by the new matplotlib implementation
+# from gallery_inspector.figures import (
+#     plot_interactive_timeline,
+#     plot_sunburst,
+#     plot_scatter,
+#     plot_file_types,
+#     plot_size_distribution,
+# )
 
 st.set_page_config(page_title="Gallery Inspector", layout="wide")
 
@@ -136,71 +137,17 @@ if "df" in st.session_state:
 
     # Plotting
     st.subheader("Interactive Timeline (Images)")
-    # Filter for images for this plot to keep it relevant to camera/lens variables
-    images_df = filtered_df[filtered_df["media_type"] == "image"]
-
-    plot_cols = [
-        c
-        for c in ["LensModel", "Model", "FNumber", "ISOSpeedRatings"]
-        if c in images_df.columns
-    ]
-    if plot_cols and not images_df.empty:
-        variable_to_plot = st.selectbox("Variable to Group By", plot_cols)
-
-        if variable_to_plot:
-            fig = plot_interactive_timeline(images_df, variable=variable_to_plot)
-            st.plotly_chart(fig, use_container_width=True)
-    elif images_df.empty:
-        st.info("No images found in the current selection.")
-    else:
-        st.info("No suitable columns found for plotting images.")
+    st.info("Interactive timelines have been replaced by static plots in the analysis directory.")
 
     # Video Plotting
     videos_df = filtered_df[filtered_df["media_type"] == "video"]
     if not videos_df.empty:
         st.subheader("Video Timeline")
-        # For videos, we just want to see the count over time, so we can group by 'media_type' (which is all 'video')
-        # or just pass a dummy variable if needed. But plot_interactive_timeline expects a variable to group/color by.
-        # We can use 'media_type' as the variable.
-        fig_video = plot_interactive_timeline(videos_df, variable="media_type")
-        st.plotly_chart(fig_video, use_container_width=True)
+        st.info("Interactive video timelines have been replaced by static plots in the analysis directory.")
 
     # New Plots
     st.header("Visualizations")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Directory Size Distribution")
-        fig_sunburst = plot_sunburst(filtered_df)
-        if fig_sunburst:
-            st.plotly_chart(fig_sunburst, use_container_width=True)
-        else:
-            st.info("Not enough data for Sunburst chart.")
-
-        st.subheader("File Size Distribution")
-        fig_size = plot_size_distribution(filtered_df)
-        st.plotly_chart(fig_size, use_container_width=True)
-
-    with col2:
-        st.subheader("File Type Distribution")
-        fig_types = plot_file_types(filtered_df)
-        st.plotly_chart(fig_types, use_container_width=True)
-
-        st.subheader("Exposure Triangle (ISO vs Shutter Speed)")
-        if (
-            "ISOSpeedRatings" in filtered_df.columns
-            and "ExposureTime" in filtered_df.columns
-        ):
-            fig_scatter = plot_scatter(
-                filtered_df,
-                x="ISOSpeedRatings",
-                y="ExposureTime",
-                color="Model" if "Model" in filtered_df.columns else None,
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
-        else:
-            st.info("ISO or Exposure Time data missing.")
+    st.info("Visualizations are now automatically generated during the analysis step.")
 
     # Organization
     st.header("Organize Files")

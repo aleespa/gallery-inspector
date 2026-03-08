@@ -4,166 +4,228 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import plotly.express as px
+import numpy as np
 
 
-def plot_monthly_by_variable(
-    df: pd.DataFrame,
-    output: Optional[Path] = None,
-    variable: str = "LensModel",
-    date_column: str = "DateTimeOriginal",
-    date_format: str = "%Y-%m-%d %H:%M:%S",
-):
+def _save_plot(fig, output_dir: Path, filename: str):
+    fig.tight_layout()
+    fig.savefig(output_dir / filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_image_cameras(df: pd.DataFrame, output_dir: Path):
+    if "camera" not in df.columns or df["camera"].dropna().empty:
+        return
+    counts = df["camera"].value_counts().nlargest(15)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    counts.plot(kind="bar", color="skyblue", ax=ax)
+    ax.set_title("Top Cameras Used", fontsize=16)
+    ax.set_xlabel("Camera Model", fontsize=12)
+    ax.set_ylabel("Number of Photos", fontsize=12)
+    ax.tick_params(axis="x", rotation=45)
+    _save_plot(fig, output_dir, "images_cameras.png")
+
+
+def plot_image_lenses(df: pd.DataFrame, output_dir: Path):
+    if "lens" not in df.columns or df["lens"].dropna().empty:
+        return
+    counts = df["lens"].value_counts().nlargest(15)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    counts.plot(kind="bar", color="lightgreen", ax=ax)
+    ax.set_title("Top Lenses Used", fontsize=16)
+    ax.set_xlabel("Lens Model", fontsize=12)
+    ax.set_ylabel("Number of Photos", fontsize=12)
+    ax.tick_params(axis="x", rotation=45)
+    _save_plot(fig, output_dir, "images_lenses.png")
+
+
+def plot_image_settings(df: pd.DataFrame, output_dir: Path):
+    fig, axes = plt.subplots(1, 4, figsize=(24, 6))
+
+    if "aperture" in df.columns and not df["aperture"].dropna().empty:
+        counts = df["aperture"].value_counts().sort_index()
+        axes[0].bar([str(x) for x in counts.index], counts.values, color="coral")
+        axes[0].set_title("Aperture (f-stop)", fontsize=14)
+        axes[0].set_xlabel("Aperture", fontsize=12)
+        axes[0].set_ylabel("Count", fontsize=12)
+        axes[0].tick_params(axis="x", rotation=90)
+
+    if "shutter_speed" in df.columns and not df["shutter_speed"].dropna().empty:
+        counts = df["shutter_speed"].value_counts()
+        # Take top 15 most common shutter speeds and sort them logically if possible, or just by count
+        counts = counts.nlargest(15)
+        axes[1].bar([str(x) for x in counts.index], counts.values, color="orchid")
+        axes[1].set_title("Shutter Speeds (Top 15)", fontsize=14)
+        axes[1].set_xlabel("Shutter Speed", fontsize=12)
+        axes[1].set_ylabel("Count", fontsize=12)
+        axes[1].tick_params(axis="x", rotation=90)
+
+    if "iso" in df.columns and not df["iso"].dropna().empty:
+        counts = df["iso"].value_counts().sort_index()
+        # Keep top 15
+        counts = counts.nlargest(15).sort_index()
+        axes[2].bar([str(x) for x in counts.index], counts.values, color="gold")
+        axes[2].set_title("ISO Settings (Top 15)", fontsize=14)
+        axes[2].set_xlabel("ISO", fontsize=12)
+        axes[2].set_ylabel("Count", fontsize=12)
+        axes[2].tick_params(axis="x", rotation=90)
+        
+    if "focal_length" in df.columns and not df["focal_length"].dropna().empty:
+        counts = df["focal_length"].value_counts().sort_index()
+        # Keep top 15
+        counts = counts.nlargest(15).sort_index()
+        axes[3].bar([str(x) for x in counts.index], counts.values, color="teal")
+        axes[3].set_title("Focal Lengths (Top 15)", fontsize=14)
+        axes[3].set_xlabel("Focal Length (mm)", fontsize=12)
+        axes[3].set_ylabel("Count", fontsize=12)
+        axes[3].tick_params(axis="x", rotation=90)
+
+    fig.suptitle("Camera Settings Distribution", fontsize=18)
+    _save_plot(fig, output_dir, "images_settings.png")
+
+
+def plot_video_duration(df: pd.DataFrame, output_dir: Path):
+    if "duration_ms" not in df.columns or df["duration_ms"].dropna().empty:
+        return
+    durations_s = df["duration_ms"].dropna() / 1000.0
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(durations_s, bins=50, color="crimson", edgecolor="black")
+    ax.set_title("Video Duration Distribution", fontsize=16)
+    ax.set_xlabel("Duration (seconds)", fontsize=12)
+    ax.set_ylabel("Number of Videos", fontsize=12)
+    _save_plot(fig, output_dir, "videos_duration.png")
+
+
+def plot_video_timeline(df: pd.DataFrame, output_dir: Path):
+    if "date_taken" not in df.columns or "duration_ms" not in df.columns:
+        return
+        
     df = df.copy()
-    df[date_column] = pd.to_datetime(
-        df[date_column], format=date_format, errors="coerce"
-    )
-    df[variable] = df[variable].replace("", pd.NA)
-    df = df.dropna(subset=[date_column, variable])
-    df["Month"] = df[date_column].dt.to_period("M").apply(lambda r: r.start_time)
-    monthly_counts = df.groupby(["Month", variable]).size().unstack()
-    fig, ax = plt.subplots(figsize=(14, 8))
-    monthly_counts_cumsum = monthly_counts.cumsum(axis=1)
-    for i, lens in enumerate(monthly_counts.columns):
-        ax.bar(
-            monthly_counts.index,
-            monthly_counts[lens],
-            width=15,
-            bottom=monthly_counts_cumsum[lens] - monthly_counts[lens],
-            label=lens,
-        )
-    ax.set_title(f"Monthly Number of Pictures Taken by {variable}")
-    ax.set_xlabel("Month")
-    ax.set_ylabel("Number of Pictures")
-    ax.spines[["right", "top"]].set_visible(False)
-    ax.legend(title="Lens Model", bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
-    if output:
-        plt.savefig(output / f"plot_weekly_{variable}.png")
-    return fig
-
-
-def plot_interactive_timeline(
-    df: pd.DataFrame,
-    variable: str = "LensModel",
-    date_column: str = "DateTimeOriginal",
-    date_format: str = "%Y-%m-%d %H:%M:%S",
-):
-    df = df.copy()
-    df[date_column] = pd.to_datetime(
-        df[date_column], format=date_format, errors="coerce"
-    )
-    df[variable] = df[variable].replace("", pd.NA)
-    df = df.dropna(subset=[date_column, variable])
-    df["Month"] = df[date_column].dt.to_period("M").apply(lambda r: r.start_time)
-
-    # Group by Month and Variable to get counts
-    monthly_counts = df.groupby(["Month", variable]).size().reset_index(name="Count")
-
-    fig = px.bar(
-        monthly_counts,
-        x="Month",
-        y="Count",
-        color=variable,
-        title=f"Monthly Number of Pictures Taken by {variable}",
-        labels={"Count": "Number of Pictures", "Month": "Month"},
-    )
-
-    return fig
-
-
-def plot_sunburst(
-    df: pd.DataFrame, path_column: str = "directory", size_column: str = "size (MB)"
-):
-    """
-    Creates a sunburst chart representing the directory structure and file sizes.
-    """
+    df["date_taken"] = pd.to_datetime(df["date_taken"], errors="coerce")
+    df = df.dropna(subset=["date_taken"])
     if df.empty:
-        return None
+        return
+        
+    df["month"] = df["date_taken"].dt.to_period("M").apply(lambda r: r.start_time)
+    df["duration_s"] = df["duration_ms"].fillna(0) / 1000.0
 
-    # We need to process the paths to create a hierarchy
-    # This is a simplified version, assuming 'directory' contains the full path
-    # We'll take the last few components of the path to avoid too much clutter
+    aggs = df.groupby("month").agg(
+        count=("name", "count"),
+        total_time=("duration_s", "sum")
+    ).sort_index()
 
-    df = df.copy()
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+    
+    ax1.plot(aggs.index, aggs["count"], marker="o", color="blue", linewidth=2)
+    ax1.set_title("Recording Activity Over Time (Videos per Month)", fontsize=14)
+    ax1.set_ylabel("Number of Videos", fontsize=12)
+    ax1.grid(True, linestyle="--", alpha=0.7)
 
-    # Helper to get relative path parts
-    # We'll try to find a common prefix and remove it
+    ax2.plot(aggs.index, aggs["total_time"] / 60.0, marker="o", color="darkorange", linewidth=2)
+    ax2.set_title("Total Recording Time per Month", fontsize=14)
+    ax2.set_ylabel("Total Duration (minutes)", fontsize=12)
+    ax2.set_xlabel("Month", fontsize=12)
+    ax2.grid(True, linestyle="--", alpha=0.7)
+
+    fig.suptitle("Video Recording Timeline", fontsize=18)
+    _save_plot(fig, output_dir, "videos_timeline.png")
+
+
+def plot_locations(df: pd.DataFrame, output_dir: Path):
+    if "latitude" not in df.columns or "longitude" not in df.columns:
+        return
+        
+    df_loc = df.dropna(subset=["latitude", "longitude"]).copy()
+    # Need to make sure they are numeric
+    df_loc["latitude"] = pd.to_numeric(df_loc["latitude"], errors="coerce")
+    df_loc["longitude"] = pd.to_numeric(df_loc["longitude"], errors="coerce")
+    df_loc = df_loc.dropna(subset=["latitude", "longitude"])
+    
+    if df_loc.empty:
+        return
+
+    # Map with dots
+    fig1, ax1 = plt.subplots(figsize=(12, 8))
+    ax1.scatter(df_loc["longitude"], df_loc["latitude"], alpha=0.5, c="blue", s=20, edgecolors="none")
+    ax1.set_title("File Locations Map", fontsize=16)
+    ax1.set_xlabel("Longitude", fontsize=12)
+    ax1.set_ylabel("Latitude", fontsize=12)
+    ax1.grid(True, linestyle="--", alpha=0.5)
+    _save_plot(fig1, output_dir, "locations_map.png")
+
+    # Heatmap
+    fig2, ax2 = plt.subplots(figsize=(12, 8))
+    hb = ax2.hexbin(df_loc["longitude"], df_loc["latitude"], gridsize=50, cmap="YlOrRd", mincnt=1)
+    cb = fig2.colorbar(hb, ax=ax2)
+    cb.set_label("Number of Files", fontsize=12)
+    ax2.set_title("Location Density Heatmap", fontsize=16)
+    ax2.set_xlabel("Longitude", fontsize=12)
+    ax2.set_ylabel("Latitude", fontsize=12)
+    ax2.grid(True, linestyle="--", alpha=0.5)
+    _save_plot(fig2, output_dir, "locations_heatmap.png")
+
+
+def plot_general_counts(df_images: pd.DataFrame, df_videos: pd.DataFrame, df_others: pd.DataFrame, output_dir: Path):
+    counts = {
+        "Images": len(df_images) if "name" in df_images.columns else 0,
+        "Videos": len(df_videos) if "name" in df_videos.columns else 0,
+        "Others": len(df_others) if "name" in df_others.columns else 0,
+    }
+    
+    # Filter out zeros
+    counts = {k: v for k, v in counts.items() if v > 0}
+    if not counts:
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.pie(counts.values(), labels=counts.keys(), autopct="%1.1f%%", startangle=140, colors=["#ff9999", "#66b3ff", "#99ff99"])
+    ax.set_title("File Type Distribution", fontsize=16)
+    _save_plot(fig, output_dir, "general_file_types.png")
+
+
+def generate_plots(metadata_file: Path, figures_dir: Path):
+    """
+    Main function to generate matplotlib plots from the Metadata.xlsx file.
+    """
     try:
-        common_prefix = os.path.commonpath(df[path_column].unique())
-        df["rel_path"] = df[path_column].apply(
-            lambda x: os.path.relpath(x, common_prefix)
-        )
-    except Exception:
-        df["rel_path"] = df[path_column]
+        # Check if the file exists and is readable
+        if not metadata_file.exists():
+            print(f"Error: {metadata_file} not found.")
+            return
 
-    df["path_parts"] = df["rel_path"].apply(lambda x: x.split(os.sep) + ["(Files)"])
+        xls = pd.ExcelFile(metadata_file)
+        
+        # Load dataframes safely
+        df_images = pd.read_excel(xls, sheet_name="images") if "images" in xls.sheet_names else pd.DataFrame()
+        df_videos = pd.read_excel(xls, sheet_name="videos") if "videos" in xls.sheet_names else pd.DataFrame()
+        df_others = pd.read_excel(xls, sheet_name="others") if "others" in xls.sheet_names else pd.DataFrame()
 
-    # Limit depth for visualization
-    max_depth = 3
-    for i in range(max_depth):
-        df[f"level_{i}"] = df["path_parts"].apply(
-            lambda x: x[i] if i < len(x) else None
-        )
+        # General plots
+        plot_general_counts(df_images, df_videos, df_others, figures_dir)
+        
+        # Image plots
+        if not df_images.empty:
+            plot_image_cameras(df_images, figures_dir)
+            plot_image_lenses(df_images, figures_dir)
+            plot_image_settings(df_images, figures_dir)
+        
+        # Video plots
+        if not df_videos.empty:
+            plot_video_duration(df_videos, figures_dir)
+            plot_video_timeline(df_videos, figures_dir)
+            
+        # Combine locations from images and videos
+        dfs_loc = []
+        if not df_images.empty and "latitude" in df_images.columns and "longitude" in df_images.columns:
+            dfs_loc.append(df_images[["latitude", "longitude"]])
+        if not df_videos.empty and "latitude" in df_videos.columns and "longitude" in df_videos.columns:
+            dfs_loc.append(df_videos[["latitude", "longitude"]])
+            
+        if dfs_loc:
+            df_combined_loc = pd.concat(dfs_loc, ignore_index=True)
+            plot_locations(df_combined_loc, figures_dir)
 
-    # Aggregate size
-    # We'll group by the levels
-    levels = [f"level_{i}" for i in range(max_depth)]
-    # fillna with a placeholder to ensure groupby doesn't drop rows, then replace back if needed
-    # or just use dropna=False which is available in newer pandas
-    df_agg = df.groupby(levels, dropna=False)[size_column].sum().reset_index()
-
-    fig = px.sunburst(
-        df_agg,
-        path=levels,
-        values=size_column,
-        title="Directory Size Distribution",
-        color=size_column,
-        color_continuous_scale="RdBu_r",
-    )
-    return fig
-
-
-def plot_scatter(df: pd.DataFrame, x: str, y: str, color: str = None):
-    """
-    Creates a scatter plot for two variables.
-    """
-    df = df.copy()
-    df = df.dropna(subset=[x, y])
-
-    fig = px.scatter(
-        df,
-        x=x,
-        y=y,
-        color=color,
-        title=f"{y} vs {x}",
-        hover_data=["name", "Model", "LensModel"],
-    )
-    return fig
-
-
-def plot_file_types(df: pd.DataFrame):
-    """
-    Creates a pie chart of file types.
-    """
-    counts = df["filetype"].value_counts().reset_index()
-    counts.columns = ["filetype", "count"]
-
-    fig = px.pie(
-        counts, names="filetype", values="count", title="File Type Distribution"
-    )
-    return fig
-
-
-def plot_size_distribution(df: pd.DataFrame):
-    """
-    Creates a histogram of file sizes.
-    """
-    fig = px.histogram(
-        df,
-        x="size (MB)",
-        nbins=50,
-        title="File Size Distribution",
-        labels={"size (MB)": "Size (MB)"},
-    )
-    return fig
+        print(f"All plots saved to {figures_dir}")
+        
+    except Exception as e:
+        print(f"Failed during plot generation: {e}")
