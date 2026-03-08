@@ -23,13 +23,12 @@ PLOT_COLORS = {
     "heatmap_land": "#C5C5C5",
     "heatmap_cmap": "autumn",
     "stacked_colors": [
-        "#e60000", "#3d6ba6", "#65880f", "#4e4e94",
-        "#ff5252", "#5a8cc2", "#8eb027", "#7474b0",
-        "#a70000", "#2b4e72", "#5f720f", "#313178",
-        "#ff7b7b", "#a7c6ed", "#c1d64d", "#a1a1ce",
-        "#ffbaba", "#e4ecf5", "#d1ef71", "#cfcfe8",
-
-    ],
+    "#e60000", "#3d6ba6", "#65880f", "#4e4e94",  # strong
+    "#a70000", "#2b4e72", "#5f720f", "#313178",  # dark
+    "#ff5252", "#5a8cc2", "#8eb027", "#7474b0",  # medium
+    "#ff7b7b", "#a7c6ed", "#c1d64d", "#a1a1ce",  # light
+    "#ffbaba", "#e4ecf5", "#d1ef71", "#cfcfe8",  # very light
+],
     "pie_chart": ["#ff9999", "#66b3ff", "#99ff99"]
 }
 # --------------------------------
@@ -85,47 +84,103 @@ def plot_image_lenses(df: pd.DataFrame, output_dir: Path):
 
 
 def plot_image_settings(df: pd.DataFrame, output_dir: Path):
-    fig, axes = plt.subplots(1, 4, figsize=(24, 6))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    axes = axes.flatten()
 
-    if "aperture" in df.columns and not df["aperture"].dropna().empty:
-        counts = df["aperture"].value_counts().sort_index()
-        axes[0].bar([str(x) for x in counts.index], counts.values, color=PLOT_COLORS["aperture"])
-        axes[0].set_title("Aperture (f-stop)", fontsize=14)
-        axes[0].set_xlabel("Aperture", fontsize=12)
-        axes[0].set_ylabel("Count", fontsize=12)
-        axes[0].tick_params(axis="x", rotation=90)
+    # --- Robust Parsers ---
+    def parse_shutter(s):
+        if pd.isna(s): return None
+        try:
+            if isinstance(s, (int, float)): return float(s)
+            s_str = str(s).rstrip("s")
+            if "/" in s_str:
+                num, den = s_str.split("/")
+                return float(num) / float(den)
+            return float(s_str)
+        except Exception: return None
 
-    if "shutter_speed" in df.columns and not df["shutter_speed"].dropna().empty:
-        counts = df["shutter_speed"].value_counts()
-        # Take top 15 most common shutter speeds and sort them logically if possible, or just by count
-        counts = counts.nlargest(15)
-        axes[1].bar([str(x) for x in counts.index], counts.values, color=PLOT_COLORS["shutter_speed"])
-        axes[1].set_title("Shutter Speeds (Top 15)", fontsize=14)
-        axes[1].set_xlabel("Shutter Speed", fontsize=12)
-        axes[1].set_ylabel("Count", fontsize=12)
-        axes[1].tick_params(axis="x", rotation=90)
+    # --- Standard sequences for ticks ---
+    STD_APERTURES = [1.0, 1.2, 1.4, 1.8, 2.0, 2.8, 3.2, 3.5, 4.0, 4.5, 5.0, 5.6, 6.3, 7.1, 8.0, 9.0, 10, 11, 13, 14, 16, 18, 20, 22]
+    STD_SHUTTERS = [1/8000, 1/4000, 1/2000, 1/1000, 1/500, 1/250, 1/125, 1/100, 1/80, 1/60, 1/50, 1/40, 1/30, 1/15, 1/8, 1/4, 1/2, 0.8, 1, 1.3, 1.6, 2, 4, 8, 15, 30]
+    STD_ISOS = [50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600, 51200]
+    STD_FOCALS = [14, 16, 20, 24, 28, 35, 50, 70, 85, 105, 135, 200, 300, 400, 500, 600, 800]
 
-    if "iso" in df.columns and not df["iso"].dropna().empty:
-        counts = df["iso"].value_counts().sort_index()
-        # Keep top 15
-        counts = counts.nlargest(15).sort_index()
-        axes[2].bar([str(x) for x in counts.index], counts.values, color=PLOT_COLORS["iso"])
-        axes[2].set_title("ISO Settings (Top 15)", fontsize=14)
-        axes[2].set_xlabel("ISO", fontsize=12)
-        axes[2].set_ylabel("Count", fontsize=12)
-        axes[2].tick_params(axis="x", rotation=90)
+    # --- Formatters ---
+    def format_shutter(v):
+        if v >= 1: return f"{v:g}s"
+        inv = 1 / v
+        if abs(inv - round(inv)) < 0.1: return f"1/{int(round(inv))}"
+        return f"1/{inv:g}"
 
-    if "focal_length" in df.columns and not df["focal_length"].dropna().empty:
-        counts = df["focal_length"].value_counts().sort_index()
-        # Keep top 15
-        counts = counts.nlargest(15).sort_index()
-        axes[3].bar([str(x) for x in counts.index], counts.values, color=PLOT_COLORS["focal_length"])
-        axes[3].set_title("Focal Lengths (Top 15)", fontsize=14)
-        axes[3].set_xlabel("Focal Length (mm)", fontsize=12)
-        axes[3].set_ylabel("Count", fontsize=12)
-        axes[3].tick_params(axis="x", rotation=90)
+    def clean_and_log(data):
+        if data.empty: return data
+        # Remove top 3% outliers
+        data = data[data > data.quantile(0.02) & data <= data.quantile(0.98)]
+        # Filter non-positive values to avoid log errors
+        data = data[data > 0]
+        return np.log10(data)
+
+    # 1. Aperture
+    if "aperture" in df.columns:
+        raw_data = pd.to_numeric(df["aperture"], errors="coerce").dropna()
+        data = clean_and_log(raw_data)
+        if not data.empty:
+            axes[0].hist(data, bins=25, color=PLOT_COLORS["aperture"], edgecolor="black", alpha=0.7)
+            # Ticks
+            min_v, max_v = raw_data.min(), raw_data.quantile(0.97)
+            ticks = [v for v in STD_APERTURES if min_v*0.9 <= v <= max_v*1.1]
+            if len(ticks) > 10: ticks = ticks[::2]
+            axes[0].set_xticks([np.log10(t) for t in ticks])
+            axes[0].set_xticklabels([f"f{v:g}" for v in ticks], rotation=45)
+            axes[0].set_title("Aperture (Log-Transformed)", fontsize=14)
+            axes[0].set_ylabel("Count", fontsize=12)
+
+    # 2. Shutter Speed
+    if "shutter_speed" in df.columns:
+        s_numeric = df["shutter_speed"].apply(parse_shutter).dropna()
+        data = clean_and_log(s_numeric)
+        if not data.empty:
+            axes[1].hist(data, bins=25, color=PLOT_COLORS["shutter_speed"], edgecolor="black", alpha=0.7)
+            # Ticks
+            min_v, max_v = s_numeric.min(), s_numeric.quantile(0.97)
+            ticks = [v for v in STD_SHUTTERS if min_v*0.9 <= v <= max_v*1.1]
+            if len(ticks) > 10: ticks = ticks[::2]
+            axes[1].set_xticks([np.log10(t) for t in ticks])
+            axes[1].set_xticklabels([format_shutter(v) for v in ticks], rotation=45)
+            axes[1].set_title("Shutter Speed (Log-Transformed)", fontsize=14)
+            axes[1].set_ylabel("Count", fontsize=12)
+
+    # 3. ISO
+    if "iso" in df.columns:
+        raw_data = pd.to_numeric(df["iso"], errors="coerce").dropna()
+        data = clean_and_log(raw_data)
+        if not data.empty:
+            axes[2].hist(data, bins=20, color=PLOT_COLORS["iso"], edgecolor="black", alpha=0.7)
+            # Ticks
+            min_v, max_v = raw_data.min(), raw_data.quantile(0.97)
+            ticks = [v for v in STD_ISOS if min_v*0.9 <= v <= max_v*1.1]
+            axes[2].set_xticks([np.log10(t) for t in ticks])
+            axes[2].set_xticklabels([str(int(v)) for v in ticks], rotation=45)
+            axes[2].set_title("ISO (Log-Transformed)", fontsize=14)
+            axes[2].set_ylabel("Count", fontsize=12)
+
+    # 4. Focal Length
+    if "focal_length" in df.columns:
+        raw_data = pd.to_numeric(df["focal_length"], errors="coerce").dropna()
+        data = clean_and_log(raw_data)
+        if not data.empty:
+            axes[3].hist(data, bins=30, color=PLOT_COLORS["focal_length"], edgecolor="black", alpha=0.7)
+            # Ticks
+            min_v, max_v = raw_data.min(), raw_data.quantile(0.97)
+            ticks = [v for v in STD_FOCALS if min_v*0.9 <= v <= max_v*1.1]
+            if len(ticks) > 10: ticks = ticks[::2]
+            axes[3].set_xticks([np.log10(t) for t in ticks])
+            axes[3].set_xticklabels([f"{v:g}mm" for v in ticks], rotation=45)
+            axes[3].set_title("Focal Length (Log-Transformed)", fontsize=14)
+            axes[3].set_ylabel("Count", fontsize=12)
 
     fig.suptitle("Camera Settings Distribution", fontsize=18)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     _save_plot(fig, output_dir, "images_settings.png")
 
 
@@ -158,6 +213,10 @@ def plot_timeline_stacked(df: pd.DataFrame, group_by: str, time_by: str, output_
 
     if pivot_df.empty:
         return
+
+    # Sort columns by total counts (commonality)
+    sorted_columns = pivot_df.sum().sort_values(ascending=False).index
+    pivot_df = pivot_df[sorted_columns]
 
     fig, ax = plt.subplots(figsize=(16, 8))
     # Apply customizable colors, cycling via modulo if there's more groupings than colors
