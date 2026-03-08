@@ -16,8 +16,8 @@ class TestExportTable(unittest.TestCase):
         # Generate real data from resources
         df_images, df_videos, df_others = analyze_directories([self.resources_dir])
         
-        # We expect 3 images based on resources: test.CR2, test.CR3, test.JPG
-        self.assertEqual(len(df_images), 3)
+        # We expect 4 images based on resources: test.CR2, test.CR3, test.JPG, test_with_location.jpg
+        self.assertEqual(len(df_images), 4)
         
         output_path = Path("test_export.xlsx")
         
@@ -36,7 +36,7 @@ class TestExportTable(unittest.TestCase):
             
             # Verify content
             df_read_images = pd.read_excel(output_path, sheet_name="images")
-            self.assertEqual(len(df_read_images), 3)
+            self.assertEqual(len(df_read_images), 4)
             # Check if one of our test files is present
             self.assertIn("test", df_read_images["name"].tolist())
             

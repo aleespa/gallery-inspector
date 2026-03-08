@@ -8,6 +8,7 @@ class TestAnalyzeSingleFile(TestCase):
     def setUpClass(cls):
         cls.resources_dir = Path(__file__).parent / "resources"
         cls.image_path = cls.resources_dir / "images" / "test.JPG"
+        cls.image_with_location_path = cls.resources_dir / "images" / "test_with_location.jpg"
         cls.raw_cr2_path = cls.resources_dir / "images" / "test.CR2"
         cls.raw_cr3_path = cls.resources_dir / "images" / "test.CR3"
 
@@ -66,3 +67,12 @@ class TestAnalyzeSingleFile(TestCase):
         self.assertEqual(result.get("aperture"), 4.0)
         self.assertEqual(result.get("iso"), 100)
         self.assertEqual(result.get("shutter_speed"), "1/2000s")
+
+    def test_analyze_image_with_location(self):
+        self.assertTrue(self.image_with_location_path.exists(), "Test image file is missing")
+        result = analyze_standard_image(self.image_with_location_path)
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("latitude"), 51.512586)
+        self.assertEqual(result.get("longitude"), -0.136975)
+        self.assertEqual(result.get("altitude"), 71.16)

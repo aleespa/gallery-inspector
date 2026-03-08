@@ -20,8 +20,8 @@ class TestGenerateTable(unittest.TestCase):
         self.assertIsInstance(videos_df, pd.DataFrame)
         self.assertIsInstance(others_df, pd.DataFrame)
 
-        # We expect 3 images based on our previous 'ls': test.CR2, test.CR3, test.JPG
-        self.assertEqual(len(images_df), 3)
+        # We expect 4 images based on our previous 'ls': test.CR2, test.CR3, test.JPG, test_with_location.jpg
+        self.assertEqual(len(images_df), 4)
         
         # Check if expected files are in the dataframe
         filenames = images_df["name"].tolist()

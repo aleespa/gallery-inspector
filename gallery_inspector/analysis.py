@@ -47,6 +47,23 @@ def _format_shutter(value):
     return value
 
 
+def _format_gps_coordinate(coords, ref=None):
+    if not coords:
+        return None
+    try:
+        d = _rational_to_float(coords[0])
+        m = _rational_to_float(coords[1])
+        s = _rational_to_float(coords[2])
+        decimal = d + (m / 60.0) + (s / 3600.0)
+        
+        if ref in [b"S", b"W", "S", "W"]:
+            decimal = -decimal
+            
+        return round(decimal, 6)
+    except Exception:
+        return None
+
+
 def analyze_image(path: Path) -> Optional[Dict]:
     if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
         return analyze_standard_image(path)
@@ -180,6 +197,18 @@ def analyze_standard_image(path: Path) -> Optional[Dict]:
         iso = exif.get(piexif.ExifIFD.ISOSpeedRatings)
         shutter_speed = _format_shutter(exif.get(piexif.ExifIFD.ExposureTime))
 
+        gps = exif_dict.get("GPS", {})
+        latitude = _format_gps_coordinate(
+            gps.get(piexif.GPSIFD.GPSLatitude),
+            gps.get(piexif.GPSIFD.GPSLatitudeRef)
+        )
+        longitude = _format_gps_coordinate(
+            gps.get(piexif.GPSIFD.GPSLongitude),
+            gps.get(piexif.GPSIFD.GPSLongitudeRef)
+        )
+        altitude_rational = gps.get(piexif.GPSIFD.GPSAltitude)
+        altitude = _rational_to_float(altitude_rational) if altitude_rational is not None else None
+
         return {
             "name": name,
             "filetype": filetype,
@@ -193,6 +222,9 @@ def analyze_standard_image(path: Path) -> Optional[Dict]:
             "aperture": aperture,
             "iso": iso,
             "shutter_speed": shutter_speed,
+            "latitude": latitude,
+            "longitude": longitude,
+            "altitude": altitude,
             "size_bytes": size_bytes,
             "size_mb": size_mb,
             "width": width,
@@ -518,6 +550,9 @@ def analyze_directories(
                         "aperture",
                         "iso",
                         "shutter_speed",
+                        "latitude",
+                        "longitude",
+                        "altitude",
                         "size_bytes",
                         "size (MB)",
                         "width",
@@ -561,7 +596,7 @@ def analyze_directories(
             df = df.drop(columns=["size_mb"], errors="ignore")
 
         if type_name == "image":
-            for col in ["aperture", "focal_length"]:
+            for col in ["aperture", "focal_length", "altitude"]:
                 if col in df.columns:
                     df[col] = df[col].map(rational_to_float)
 
