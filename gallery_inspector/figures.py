@@ -83,11 +83,60 @@ def plot_image_lenses(df: pd.DataFrame, output_dir: Path):
     _save_plot(fig, output_dir, "images_lenses.png")
 
 
+def _plot_setting_panel(
+    ax,
+    df: pd.DataFrame,
+    column: str,
+    color: str,
+    title: str,
+    std_ticks: list,
+    data_parser,
+    tick_formatter,
+    log_transform: bool = True,
+    inverse_log: bool = False,
+):
+    if column not in df.columns or df[column].dropna().empty:
+        ax.axis("off")
+        return
+
+    raw_data = df[column].apply(data_parser).dropna()
+
+    def clean_and_log(data):
+        if data.empty: return data
+        data = data[(data > data.quantile(0.02)) & (data <= data.quantile(0.98))]
+        data = data[data > 0]
+        return np.log10(data)
+
+    data = clean_and_log(raw_data) if log_transform else raw_data
+    if data.empty:
+        ax.axis("off")
+        return
+
+    if inverse_log:
+        data = -data
+
+    ax.hist(data, bins=25, color=color, edgecolor="black", alpha=0.7)
+
+    min_v, max_v = raw_data.min(), raw_data.quantile(0.97)
+    ticks = [v for v in std_ticks if min_v * 0.9 <= v <= max_v * 1.1]
+    if len(ticks) > 10:
+        ticks = ticks[::2]
+
+    tick_positions = [np.log10(t) for t in ticks]
+    if inverse_log:
+        tick_positions = [-pos for pos in tick_positions]
+
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels([tick_formatter(v) for v in ticks], rotation=45)
+    ax.set_title(title, fontsize=14)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylabel("Count", fontsize=12)
+
+
 def plot_image_settings(df: pd.DataFrame, output_dir: Path):
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10), dpi=150)
     axes = axes.flatten()
 
-    # --- Robust Parsers ---
     def parse_shutter(s):
         if pd.isna(s): return None
         try:
@@ -99,85 +148,42 @@ def plot_image_settings(df: pd.DataFrame, output_dir: Path):
             return float(s_str)
         except Exception: return None
 
-    # --- Standard sequences for ticks ---
-    STD_APERTURES = [1.0, 1.2, 1.4, 1.8, 2.0, 2.8, 3.2, 3.5, 4.0, 4.5, 5.0, 5.6, 6.3, 7.1, 8.0, 9.0, 10, 11, 13, 14, 16, 18, 20, 22]
-    STD_SHUTTERS = [1/8000, 1/4000, 1/2000, 1/1000, 1/500, 1/250, 1/125, 1/100, 1/80, 1/60, 1/50, 1/40, 1/30, 1/15, 1/8, 1/4, 1/2, 0.8, 1, 1.3, 1.6, 2, 4, 8, 15, 30]
-    STD_ISOS = [50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600, 51200]
-    STD_FOCALS = [14, 16, 20, 24, 28, 35, 50, 70, 85, 105, 135, 200, 300, 400, 500, 600, 800]
+    STD_APERTURES = [1.2, 1.8, 2.2, 3.2, 4.0, 5.6, 6.3, 7.1, 8.0, 9.0, 10, 11, 13, 14, 16, 18, 20, 22]
+    STD_SHUTTERS = [1/4000, 1/2000, 1/1000, 1/500, 1/250, 1/125, 1/100, 1/80, 1/60, 1/50, 1/40, 1/30, 1/15, 1/8, 1/4, 1/2, 0.8, 1, 1.3, 1.6, 2, 4, 8, 15, 30]
+    STD_ISOS = [100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600, 51200]
+    STD_FOCALS = [14, 18, 24, 28, 35, 50, 70, 85, 105, 135, 200, 300, 400, 500, 600, 800]
 
-    # --- Formatters ---
     def format_shutter(v):
         if v >= 1: return f"{v:g}s"
         inv = 1 / v
         if abs(inv - round(inv)) < 0.1: return f"1/{int(round(inv))}"
         return f"1/{inv:g}"
 
-    def clean_and_log(data):
-        if data.empty: return data
-        # Remove top 3% outliers
-        data = data[data > data.quantile(0.02) & data <= data.quantile(0.98)]
-        # Filter non-positive values to avoid log errors
-        data = data[data > 0]
-        return np.log10(data)
+    settings_to_plot = [
+        {
+            "column": "aperture", "color": PLOT_COLORS["aperture"], "title": "Aperture (Log-Transformed)",
+            "std_ticks": STD_APERTURES, "data_parser": lambda x: pd.to_numeric(x, errors="coerce"),
+            "tick_formatter": lambda v: f"f{v:g}",
+        },
+        {
+            "column": "shutter_speed", "color": PLOT_COLORS["shutter_speed"], "title": "Shutter Speed (Log-Transformed)",
+            "std_ticks": STD_SHUTTERS, "data_parser": parse_shutter, "tick_formatter": format_shutter,
+            "inverse_log": True,
+        },
+        {
+            "column": "iso", "color": PLOT_COLORS["iso"], "title": "ISO (Log-Transformed)",
+            "std_ticks": STD_ISOS, "data_parser": lambda x: pd.to_numeric(x, errors="coerce"),
+            "tick_formatter": lambda v: str(int(v)),
+        },
+        {
+            "column": "focal_length", "color": PLOT_COLORS["focal_length"], "title": "Focal Length (Log-Transformed)",
+            "std_ticks": STD_FOCALS, "data_parser": lambda x: pd.to_numeric(x, errors="coerce"),
+            "tick_formatter": lambda v: f"{v:g}mm",
+        },
+    ]
 
-    # 1. Aperture
-    if "aperture" in df.columns:
-        raw_data = pd.to_numeric(df["aperture"], errors="coerce").dropna()
-        data = clean_and_log(raw_data)
-        if not data.empty:
-            axes[0].hist(data, bins=25, color=PLOT_COLORS["aperture"], edgecolor="black", alpha=0.7)
-            # Ticks
-            min_v, max_v = raw_data.min(), raw_data.quantile(0.97)
-            ticks = [v for v in STD_APERTURES if min_v*0.9 <= v <= max_v*1.1]
-            if len(ticks) > 10: ticks = ticks[::2]
-            axes[0].set_xticks([np.log10(t) for t in ticks])
-            axes[0].set_xticklabels([f"f{v:g}" for v in ticks], rotation=45)
-            axes[0].set_title("Aperture (Log-Transformed)", fontsize=14)
-            axes[0].set_ylabel("Count", fontsize=12)
-
-    # 2. Shutter Speed
-    if "shutter_speed" in df.columns:
-        s_numeric = df["shutter_speed"].apply(parse_shutter).dropna()
-        data = clean_and_log(s_numeric)
-        if not data.empty:
-            axes[1].hist(data, bins=25, color=PLOT_COLORS["shutter_speed"], edgecolor="black", alpha=0.7)
-            # Ticks
-            min_v, max_v = s_numeric.min(), s_numeric.quantile(0.97)
-            ticks = [v for v in STD_SHUTTERS if min_v*0.9 <= v <= max_v*1.1]
-            if len(ticks) > 10: ticks = ticks[::2]
-            axes[1].set_xticks([np.log10(t) for t in ticks])
-            axes[1].set_xticklabels([format_shutter(v) for v in ticks], rotation=45)
-            axes[1].set_title("Shutter Speed (Log-Transformed)", fontsize=14)
-            axes[1].set_ylabel("Count", fontsize=12)
-
-    # 3. ISO
-    if "iso" in df.columns:
-        raw_data = pd.to_numeric(df["iso"], errors="coerce").dropna()
-        data = clean_and_log(raw_data)
-        if not data.empty:
-            axes[2].hist(data, bins=20, color=PLOT_COLORS["iso"], edgecolor="black", alpha=0.7)
-            # Ticks
-            min_v, max_v = raw_data.min(), raw_data.quantile(0.97)
-            ticks = [v for v in STD_ISOS if min_v*0.9 <= v <= max_v*1.1]
-            axes[2].set_xticks([np.log10(t) for t in ticks])
-            axes[2].set_xticklabels([str(int(v)) for v in ticks], rotation=45)
-            axes[2].set_title("ISO (Log-Transformed)", fontsize=14)
-            axes[2].set_ylabel("Count", fontsize=12)
-
-    # 4. Focal Length
-    if "focal_length" in df.columns:
-        raw_data = pd.to_numeric(df["focal_length"], errors="coerce").dropna()
-        data = clean_and_log(raw_data)
-        if not data.empty:
-            axes[3].hist(data, bins=30, color=PLOT_COLORS["focal_length"], edgecolor="black", alpha=0.7)
-            # Ticks
-            min_v, max_v = raw_data.min(), raw_data.quantile(0.97)
-            ticks = [v for v in STD_FOCALS if min_v*0.9 <= v <= max_v*1.1]
-            if len(ticks) > 10: ticks = ticks[::2]
-            axes[3].set_xticks([np.log10(t) for t in ticks])
-            axes[3].set_xticklabels([f"{v:g}mm" for v in ticks], rotation=45)
-            axes[3].set_title("Focal Length (Log-Transformed)", fontsize=14)
-            axes[3].set_ylabel("Count", fontsize=12)
+    for i, settings in enumerate(settings_to_plot):
+        _plot_setting_panel(ax=axes[i], df=df, **settings)
 
     fig.suptitle("Camera Settings Distribution", fontsize=18)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
