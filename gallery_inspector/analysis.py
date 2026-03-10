@@ -1,6 +1,10 @@
 import concurrent.futures
+import contextlib
+import json
 import os
 import re
+import subprocess
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +19,7 @@ from pymediainfo import MediaInfo
 
 from gallery_inspector.common import clean_excel_unsafe, rational_to_float
 
+DEVNULL = open(os.devnull, "w")
 
 def _rational_to_float(value):
     if isinstance(value, tuple) and len(value) == 2 and value[1] != 0:
@@ -114,7 +119,7 @@ def analyze_video(path: Path) -> Optional[Dict]:
             "name": name,
             "filetype": filetype,
             "directory": directory,
-            "Full path": str(path.resolve()),
+            "Full path": str(path),
             "date_taken": date_taken,
             "time_taken": time_taken,
             "size_bytes": size_bytes,
@@ -142,7 +147,7 @@ def analyze_other(path: Path) -> Optional[Dict]:
             "name": name,
             "filetype": filetype,
             "directory": directory,
-            "Full path": str(path.resolve()),
+            "Full path": str(path),
             "size_bytes": size_bytes,
             "size_mb": size_mb,
         }
@@ -213,7 +218,7 @@ def analyze_standard_image(path: Path) -> Optional[Dict]:
             "name": name,
             "filetype": filetype,
             "directory": directory,
-            "Full path": str(path.resolve()),
+            "Full path": str(path),
             "date_taken": date_taken,
             "time_taken": time_taken,
             "camera": camera,
@@ -241,7 +246,6 @@ def analyze_raw(path: Path) -> Optional[Dict]:
     filetype = path.suffix.lower()
     if filetype not in {".cr2", ".cr3"}:
         raise ValueError("Not a CR2 or CR3 file")
-
     directory = str(path.parent)
     size_bytes = path.stat().st_size
     size_mb = round(size_bytes / (1024 * 1024), 2)
@@ -251,7 +255,8 @@ def analyze_raw(path: Path) -> Optional[Dict]:
     ) = None
     width = height = None
     with open(path, "rb") as f:
-        tags = exifread.process_file(f, details=False)
+        with contextlib.redirect_stderr(DEVNULL):
+            tags = exifread.process_file(f, details=False)
 
     if filetype in {".cr2"}:
         date_taken_full = _decode_if_bytes(tags.get("EXIF DateTimeOriginal"))
@@ -324,7 +329,9 @@ def analyze_raw(path: Path) -> Optional[Dict]:
                         import io
 
                         f_tiff = io.BytesIO(head[idx:])
-                        tags = exifread.process_file(f_tiff, details=False)
+
+                        with contextlib.redirect_stderr(DEVNULL):
+                            tags = exifread.process_file(f_tiff, details=False)
                         if tags:
                             if not camera:
                                 camera = _decode_if_bytes(tags.get("Image Model"))
@@ -490,7 +497,7 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         "name": name,
         "filetype": filetype,
         "directory": directory,
-        "Full path": str(path.resolve()),
+        "Full path": str(path),
         "date_taken": date_taken,
         "time_taken": time_taken,
         "camera": camera,
@@ -506,6 +513,185 @@ def analyze_raw(path: Path) -> Optional[Dict]:
         "width": int(str(width)) if width is not None else None,
         "height": int(str(height)) if height is not None else None,
     }
+
+
+def run_exiftool_batch(file_paths: List[Path]) -> List[Dict]:
+    """Runs ExifTool on a list of files and returns the parsed JSON output."""
+    if not file_paths:
+        return []
+
+    # Use a temporary file to avoid command line length limits on Windows (WinError 206)
+    with tempfile.NamedTemporaryFile(
+        mode="w", delete=False, encoding="utf-8", suffix=".txt"
+    ) as tmp:
+        for p in file_paths:
+            tmp.write(str(p) + "\n")
+        tmp_path = tmp.name
+
+    # Command to run ExifTool:
+    # -j: JSON output
+    # -n: Numeric output for machine readability
+    # -fast2: Faster scanning (skip deep scans)
+    # -m: Ignore minor errors and warnings
+    # -q -q: Suppress informational messages and warnings
+    # -c %.6f: Format GPS as decimals
+    # Explicitly request ONLY the tags used by the application to save time and bandwidth
+    cmd = [
+        "exiftool",
+        "-j",
+        "-n",
+        "-fast2",
+        "-m",
+        "-q",
+        "-q",
+        "-c",
+        "%.6f",
+        "-FileName",
+        "-Directory",
+        "-FileSize",
+        "-DateTimeOriginal",
+        "-CreateDate",
+        "-Model",
+        "-LensModel",
+        "-LensID",
+        "-FocalLength",
+        "-FNumber",
+        "-ISO",
+        "-ExposureTime",
+        "-GPSLatitude",
+        "-GPSLongitude",
+        "-GPSAltitude",
+        "-ImageWidth",
+        "-ImageHeight",
+        "-Duration",
+        "-VideoCodecID",
+        "-CompressorID",
+        "-VideoFrameRate",
+        "-@",
+        tmp_path,
+    ]
+
+    try:
+        # We don't use check=True because ExifTool returns exit code 1 for minor warnings
+        process = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8"
+        )
+        if process.stderr:
+            logger.debug(f"ExifTool stderr: {process.stderr}")
+
+        if not process.stdout:
+            return []
+
+        return json.loads(process.stdout)
+    except Exception as e:
+        logger.error(f"Error running ExifTool: {e}")
+        return []
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+def _map_exiftool_result(exif_item: Dict) -> tuple[str, Dict]:
+    """Maps ExifTool JSON output to the internal metadata format."""
+    source_file_raw = exif_item.get("SourceFile", "")
+    if not source_file_raw:
+        return None, None
+
+    # Use os.path instead of Path for better performance in tight loops
+    full_path = source_file_raw
+    name = os.path.splitext(os.path.basename(source_file_raw))[0]
+    filetype = os.path.splitext(source_file_raw)[1].lower()
+    directory = exif_item.get("Directory") or os.path.dirname(source_file_raw)
+    size_bytes = exif_item.get("FileSize")
+    size_mb = round(size_bytes / (1048576), 2) if size_bytes else 0.0
+
+    # Date handling
+    date_taken_full = exif_item.get("DateTimeOriginal") or exif_item.get("CreateDate")
+    date_taken = None
+    time_taken = None
+    if date_taken_full:
+        # ExifTool -n returns YYYY:MM:DD HH:MM:SS
+        if " " in str(date_taken_full):
+            date_taken, time_taken = str(date_taken_full).split(" ", 1)
+        else:
+            date_taken = str(date_taken_full)
+
+    # Detect category
+    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
+    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
+
+    if filetype in image_extensions:
+        category = "image"
+        # Mapping for images
+        data = {
+            "name": name,
+            "filetype": filetype,
+            "directory": directory,
+            "Full path": full_path,
+            "date_taken": date_taken,
+            "time_taken": time_taken,
+            "camera": exif_item.get("Model"),
+            "lens": exif_item.get("LensModel") or exif_item.get("LensID"),
+            "focal_length": exif_item.get("FocalLength"),
+            "aperture": exif_item.get("FNumber") or exif_item.get("Aperture"),
+            "iso": exif_item.get("ISO"),
+            "shutter_speed": exif_item.get("ExposureTime"),
+            "latitude": exif_item.get("GPSLatitude"),
+            "longitude": exif_item.get("GPSLongitude"),
+            "altitude": exif_item.get("GPSAltitude"),
+            "size_bytes": size_bytes,
+            "size_mb": size_mb,
+            "width": exif_item.get("ImageWidth") or exif_item.get("ExifImageWidth"),
+            "height": exif_item.get("ImageHeight") or exif_item.get("ExifImageHeight"),
+        }
+        # Format shutter speed to fractional if < 1
+        if data["shutter_speed"] and isinstance(data["shutter_speed"], (int, float)):
+            if data["shutter_speed"] < 1:
+                den = round(1 / data["shutter_speed"])
+                data["shutter_speed"] = f"1/{den}s"
+            else:
+                data["shutter_speed"] = f"{data['shutter_speed']}s"
+
+        return category, data
+
+    elif filetype in video_extensions:
+        category = "video"
+        # Mapping for videos
+        duration = exif_item.get("Duration")
+        if duration and isinstance(duration, (int, float)):
+            duration = duration * 1000  # convert s to ms
+
+        data = {
+            "name": name,
+            "filetype": filetype,
+            "directory": directory,
+            "Full path": full_path,
+            "date_taken": date_taken,
+            "time_taken": time_taken,
+            "size_bytes": size_bytes,
+            "size_mb": size_mb,
+            "width": exif_item.get("ImageWidth"),
+            "height": exif_item.get("ImageHeight"),
+            "duration_ms": duration,
+            "codec": exif_item.get("VideoCodecID") or exif_item.get("CompressorID"),
+            "frame_rate": exif_item.get("VideoFrameRate"),
+        }
+        return category, data
+
+    else:
+        category = "other"
+        data = {
+            "name": name,
+            "filetype": filetype,
+            "directory": directory,
+            "Full path": full_path,
+            "size_bytes": size_bytes,
+            "size_mb": size_mb,
+        }
+        return category, data
 
 
 def analyze_any(file_path: Path):
@@ -526,6 +712,7 @@ def analyze_directories(
     stop_event: Optional[threading.Event] = None,
     pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
+    use_exiftool: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     logger.info(f"Starting directory analysis for: {[str(p) for p in paths]}")
     all_images = []
@@ -640,39 +827,82 @@ def analyze_directories(
             format_df(pd.DataFrame(), "other"),
         )
 
-    logger.info(f"Extracting metadata from {total_files} files...")
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(analyze_any, fp) for fp in files_to_process]
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            if stop_event and stop_event.is_set():
-                executor.shutdown(wait=False, cancel_futures=True)
-                return (
-                    format_df(pd.DataFrame(), "image"),
-                    format_df(pd.DataFrame(), "video"),
-                    format_df(pd.DataFrame(), "other"),
-                )
+    if use_exiftool:
+        logger.info(
+            f"Extracting metadata from {total_files:,} files in parallel batches with ExifTool..."
+        )
+        batch_size = 5000
+        # Determine number of workers based on CPU count
+        num_workers = min(os.cpu_count() or 4, (total_files // batch_size) + 1)
 
-            if pause_event:
-                while pause_event.is_set():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+            batch_list = [
+                files_to_process[i : i + batch_size]
+                for i in range(0, total_files, batch_size)
+            ]
+            futures = [executor.submit(run_exiftool_batch, b) for b in batch_list]
+
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                if stop_event and stop_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+
+                if pause_event:
+                    while pause_event.is_set():
+                        if stop_event and stop_event.is_set():
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
+                        threading.Event().wait(0.1)
                     if stop_event and stop_event.is_set():
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        return (
-                            format_df(pd.DataFrame(), "image"),
-                            format_df(pd.DataFrame(), "video"),
-                            format_df(pd.DataFrame(), "other"),
-                        )
-                    threading.Event().wait(0.1)
+                        break
 
-            category, result = future.result()
-            if result:
-                if category == "image":
-                    all_images.append(result)
-                elif category == "video":
-                    all_videos.append(result)
-                else:
-                    all_others.append(result)
-            if progress_callback:
-                progress_callback((i + 1) / total_files)
+                exif_results = future.result()
+                for exif_item in exif_results:
+                    category, result = _map_exiftool_result(exif_item)
+                    if result:
+                        if category == "image":
+                            all_images.append(result)
+                        elif category == "video":
+                            all_videos.append(result)
+                        else:
+                            all_others.append(result)
+
+                if progress_callback:
+                    progress_callback(min((i + 1) * batch_size / total_files, 1.0))
+    else:
+        logger.info(f"Extracting metadata from {total_files:,} files one-by-one (original mode)...")
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(analyze_any, fp) for fp in files_to_process]
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                if stop_event and stop_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    return (
+                        format_df(pd.DataFrame(), "image"),
+                        format_df(pd.DataFrame(), "video"),
+                        format_df(pd.DataFrame(), "other"),
+                    )
+
+                if pause_event:
+                    while pause_event.is_set():
+                        if stop_event and stop_event.is_set():
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            return (
+                                format_df(pd.DataFrame(), "image"),
+                                format_df(pd.DataFrame(), "video"),
+                                format_df(pd.DataFrame(), "other"),
+                            )
+                        threading.Event().wait(0.1)
+
+                category, result = future.result()
+                if result:
+                    if category == "image":
+                        all_images.append(result)
+                    elif category == "video":
+                        all_videos.append(result)
+                    else:
+                        all_others.append(result)
+                if progress_callback:
+                    progress_callback((i + 1) / total_files)
 
     df_images = pd.DataFrame(all_images)
     df_videos = pd.DataFrame(all_videos)

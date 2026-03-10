@@ -1,3 +1,6 @@
+import contextlib
+import functools
+import os
 import re
 import shutil
 from pathlib import Path
@@ -49,3 +52,19 @@ def copy_from_list(list_files: list, to_directory: Path):
             shutil.copy2(file_path, destination)
         else:
             logger.warning(f"Skipped: {file_path} (does not exist or is not a file)")
+
+
+
+@contextlib.contextmanager
+def suppress_print():
+    with open(os.devnull, "w") as devnull:
+        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+            yield
+
+
+def suppress_print_decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with suppress_print():
+            return func(*args, **kwargs)
+    return wrapper
