@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest import TestCase
 
-from gallery_inspector.analysis import analyze_raw, analyze_standard_image
+from gallery_inspector.analysis import analyze_files
 
 class TestAnalyzeSingleFile(TestCase):
     @classmethod
@@ -14,65 +14,73 @@ class TestAnalyzeSingleFile(TestCase):
 
     def test_analyze_image(self):
         self.assertTrue(self.image_path.exists(), "Test image file is missing")
+        df_images, df_videos, df_others = analyze_files([self.image_path])
+        self.assertEqual(len(df_images), 1)
+        self.assertEqual(len(df_videos), 0)
+        self.assertEqual(len(df_others), 0)
 
-        result = analyze_standard_image(self.image_path)
-
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result.get("name"), "test")
-        self.assertEqual(result.get("filetype"), ".jpg")
-        self.assertEqual(result.get("camera"), "Canon EOS Rebel T6")
-        self.assertEqual(result.get("lens"), "EF-S18-55mm f/3.5-5.6 III")
-        self.assertEqual(result.get("date_taken"), "2021:05:17")
-        self.assertEqual(result.get("time_taken"), "11:49:34")
-        self.assertEqual(result.get("width"), 5184)
-        self.assertEqual(result.get("height"), 3456)
-        self.assertEqual(result.get("focal_length"), 55.0)
-        self.assertEqual(result.get("aperture"), 5.6)
-        self.assertEqual(result.get("iso"), 100)
-        self.assertEqual(result.get("shutter_speed"), "1/800s")
+        result = df_images.iloc[0]
+        self.assertEqual(result["name"], "test")
+        self.assertEqual(result["filetype"], ".jpg")
+        self.assertEqual(result["camera"], "Canon EOS Rebel T6")
+        self.assertEqual(result["lens"], "EF-S18-55mm f/3.5-5.6 III")
+        self.assertEqual(str(result["date_taken"]), "2021-05-17")
+        self.assertEqual(result["time_taken"], "11:49:34")
+        self.assertEqual(result["width"], 5184)
+        self.assertEqual(result["height"], 3456)
+        self.assertEqual(result["focal_length"], 55.0)
+        self.assertEqual(result["aperture"], 5.6)
+        self.assertEqual(result["iso"], 100)
+        self.assertEqual(result["shutter_speed"], "1/800s")
 
     def test_analyze_raw_cr2(self):
         self.assertTrue(self.raw_cr2_path.exists(), "Test image file is missing")
+        df_images, df_videos, df_others = analyze_files([self.raw_cr2_path])
+        self.assertEqual(len(df_images), 1)
+        self.assertEqual(len(df_videos), 0)
+        self.assertEqual(len(df_others), 0)
 
-        result = analyze_raw(self.raw_cr2_path)
-
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result.get("name"), "test")
-        self.assertEqual(result.get("filetype"), ".cr2")
-        self.assertEqual(result.get("camera"), "Canon EOS Rebel T6")
-        self.assertEqual(result.get("lens"), "EF-S18-55mm f/3.5-5.6 III")
-        self.assertEqual(result.get("date_taken"), "2025:04:19")
-        self.assertEqual(result.get("time_taken"), "16:59:43")
-        self.assertEqual(result.get("width"), 5184)
-        self.assertEqual(result.get("height"), 3456)
-        self.assertEqual(result.get("focal_length"), 28.0)
-        self.assertEqual(result.get("aperture"), 4.0)
-        self.assertEqual(result.get("iso"), 100)
-        self.assertEqual(result.get("shutter_speed"), "1/400s")
+        result = df_images.iloc[0]
+        self.assertEqual(result["name"], "test")
+        self.assertEqual(result["filetype"], ".cr2")
+        self.assertEqual(result["camera"], "Canon EOS Rebel T6")
+        self.assertEqual(result["lens"], "EF-S18-55mm f/3.5-5.6 III")
+        self.assertEqual(str(result["date_taken"]), "2025-04-19")
+        self.assertEqual(result["time_taken"], "16:59:43")
+        self.assertEqual(result["width"], 5184)
+        self.assertEqual(result["height"], 3456)
+        self.assertEqual(result["focal_length"], 28.0)
+        self.assertEqual(result["aperture"], 4.0)
+        self.assertEqual(result["iso"], 100)
+        self.assertEqual(result["shutter_speed"], "1/400s")
 
     def test_analyze_raw_cr3(self):
         self.assertTrue(self.raw_cr3_path.exists(), "Test image file is missing")
-        result = analyze_raw(self.raw_cr3_path)
+        df_images, df_videos, df_others = analyze_files([self.raw_cr3_path])
+        self.assertEqual(len(df_images), 1)
+        self.assertEqual(len(df_videos), 0)
+        self.assertEqual(len(df_others), 0)
 
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result.get("name"), "test")
-        self.assertEqual(result.get("filetype"), ".cr3")
-        self.assertEqual(result.get("camera"), "Canon EOS R8")
-        self.assertEqual(result.get("lens"), "RF24-105mm F4-7.1 IS STM")
-        self.assertEqual(result.get("date_taken"), "2026:02:14")
-        self.assertEqual(result.get("time_taken"), "14:00:21")
-        self.assertEqual(result.get("width"), 6000)
-        self.assertEqual(result.get("height"), 4000)
-        self.assertEqual(result.get("focal_length"), 24.0)
-        self.assertEqual(result.get("aperture"), 4.0)
-        self.assertEqual(result.get("iso"), 100)
-        self.assertEqual(result.get("shutter_speed"), "1/2000s")
+        result = df_images.iloc[0]
+        self.assertEqual(result["name"], "test")
+        self.assertEqual(result["filetype"], ".cr3")
+        self.assertEqual(result["camera"], "Canon EOS R8")
+        self.assertEqual(result["lens"], "RF24-105mm F4-7.1 IS STM")
+        self.assertEqual(str(result["date_taken"]), "2026-02-14")
+        self.assertEqual(result["time_taken"], "14:00:21")
+        self.assertEqual(result["width"], 6000)
+        self.assertEqual(result["height"], 4000)
+        self.assertEqual(result["focal_length"], 24.0)
+        self.assertEqual(result["aperture"], 4.0)
+        self.assertEqual(result["iso"], 100)
+        self.assertEqual(result["shutter_speed"], "1/2000s")
 
     def test_analyze_image_with_location(self):
         self.assertTrue(self.image_with_location_path.exists(), "Test image file is missing")
-        result = analyze_standard_image(self.image_with_location_path)
+        df_images, _, _ = analyze_files([self.image_with_location_path])
+        self.assertEqual(len(df_images), 1)
 
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result.get("latitude"), 51.512586)
-        self.assertEqual(result.get("longitude"), -0.136975)
-        self.assertEqual(result.get("altitude"), 71.16)
+        result = df_images.iloc[0]
+        self.assertAlmostEqual(result["latitude"], 51.512586, places=6)
+        self.assertAlmostEqual(result["longitude"], -0.136975, places=6)
+        self.assertAlmostEqual(result["altitude"], 71.16, places=2)

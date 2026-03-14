@@ -1,137 +1,59 @@
 import concurrent.futures
-import contextlib
 import json
+import math
 import os
-import re
 import subprocess
 import tempfile
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-import exifread
 import pandas as pd
-import piexif
-from PIL import Image
 from loguru import logger
-from pymediainfo import MediaInfo
 
 from gallery_inspector.common import clean_excel_unsafe, rational_to_float
 
-DEVNULL = open(os.devnull, "w")
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
-def _rational_to_float(value):
-    if isinstance(value, tuple) and len(value) == 2 and value[1] != 0:
-        return value[0] / value[1]
-    return value
-
-
-def _decode_if_bytes(value):
-    if value is None:
-        return None
-    # exifread returns IFDTag objects
-    if hasattr(value, "values"):
-        val = value.values
-        if isinstance(val, list):
-            # For ASCII tags, it's usually a list of characters
-            return "".join(val) if all(isinstance(c, str) for c in val) else str(val[0])
-        return str(val)
-    # fallback for bytes
-    if isinstance(value, bytes):
-        return value.decode(errors="ignore").strip("\x00")
-    return str(value)
-
-
-def _format_shutter(value):
-    if isinstance(value, tuple) and value[1] != 0:
-        num, den = value
-        if num > den:
-            return f"{num / den:.2f}s"
-        return f"{num}/{den}s"
-    return value
-
-
-def _format_gps_coordinate(coords, ref=None):
-    if not coords:
-        return None
-    try:
-        d = _rational_to_float(coords[0])
-        m = _rational_to_float(coords[1])
-        s = _rational_to_float(coords[2])
-        decimal = d + (m / 60.0) + (s / 3600.0)
-        
-        if ref in [b"S", b"W", "S", "W"]:
-            decimal = -decimal
-            
-        return round(decimal, 6)
-    except Exception:
-        return None
-
-
-def analyze_image(path: Path) -> Optional[Dict]:
-    if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
-        return analyze_standard_image(path)
-    elif path.suffix.lower() in {".cr2", ".cr3"}:
-        return analyze_raw(path)
-    return None
-
-
-def analyze_video(path: Path) -> Optional[Dict]:
-    try:
-        file_name = path.name
-        name = file_name.rsplit(".", 1)[0]
-        filetype = path.suffix.lower()
-        directory = str(path.parent)
-        size_bytes = path.stat().st_size
-        size_mb = round(size_bytes / (1024 * 1024), 2)
-
-        media_info = MediaInfo.parse(str(path))
-        duration = None
-        width = None
-        height = None
-        date_taken = None
-        time_taken = None
-        codec = None
-        frame_rate = None
-
-        for track in media_info.tracks:
-            if track.track_type == "General":
-                duration = track.duration  # in ms
-                creation_date = track.tagged_date or track.encoded_date
-                if creation_date:
-                    creation_date = creation_date.replace(" UTC", "")
-                    match = re.search(
-                        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
-                        creation_date,
-                    )
-                    if match:
-                        dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-                        date_taken = dt.strftime("%Y:%m:%d")
-                        time_taken = dt.strftime("%H:%M:%S")
-            elif track.track_type == "Video":
-                width = track.width
-                height = track.height
-                codec = track.format
-                frame_rate = track.frame_rate
-
-        return {
-            "name": name,
-            "filetype": filetype,
-            "directory": directory,
-            "Full path": str(path),
-            "date_taken": date_taken,
-            "time_taken": time_taken,
-            "size_bytes": size_bytes,
-            "size_mb": size_mb,
-            "width": width,
-            "height": height,
-            "duration_ms": duration,
-            "codec": codec,
-            "frame_rate": frame_rate,
-        }
-    except Exception:
-        return None
+EXIFTOOL_BASE_ARGS = [
+    "exiftool",
+    "-j",
+    "-n",
+    "-fast2",
+    "-m",
+    "-q",
+    "-q",
+    "-c",
+    "%.6f",
+    "-FileName",
+    "-Directory",
+    "-FileSize",
+    "-DateTimeOriginal",
+    "-CreateDate",
+]
+EXIFTOOL_IMAGE_TAG_ARGS = [
+    "-Model",
+    "-LensModel",
+    "-LensID",
+    "-FocalLength",
+    "-FNumber",
+    "-ISO",
+    "-ExposureTime",
+    "-GPSLatitude",
+    "-GPSLongitude",
+    "-GPSAltitude",
+    "-ImageWidth",
+    "-ImageHeight",
+]
+EXIFTOOL_VIDEO_TAG_ARGS = [
+    "-ImageWidth",
+    "-ImageHeight",
+    "-Duration",
+    "-VideoCodecID",
+    "-CompressorID",
+    "-VideoFrameRate",
+]
 
 
 def analyze_other(path: Path) -> Optional[Dict]:
@@ -155,424 +77,26 @@ def analyze_other(path: Path) -> Optional[Dict]:
         return None
 
 
-def analyze_standard_image(path: Path) -> Optional[Dict]:
-    try:
-        file_name = path.name
-        name = file_name.rsplit(".", 1)[0]
-        filetype = path.suffix.lower()
-        if filetype not in {".jpg", ".jpeg", ".png", ".webp"}:
-            raise ValueError(f"Not a supported image file: {filetype}")
-        directory = str(path.parent)
-        size_bytes = path.stat().st_size
-        size_mb = round(size_bytes / (1024 * 1024), 2)
-
-        with Image.open(path) as img:
-            width, height = img.size
-            exif_bytes = img.info.get("exif")
-
-        if exif_bytes:
-            exif_dict = piexif.load(exif_bytes)
-        else:
-            try:
-                exif_dict = piexif.load(str(path))
-            except Exception:
-                exif_dict = {
-                    "0th": {},
-                    "Exif": {},
-                    "GPS": {},
-                    "1st": {},
-                    "thumbnail": None,
-                }
-
-        zeroth = exif_dict.get("0th", {})
-        exif = exif_dict.get("Exif", {})
-
-        date_taken_full = _decode_if_bytes(exif.get(piexif.ExifIFD.DateTimeOriginal))
-        date_taken = None
-        time_taken = None
-        if date_taken_full and " " in date_taken_full:
-            date_taken, time_taken = date_taken_full.split(" ", 1)
-        elif date_taken_full:
-            date_taken = date_taken_full
-
-        camera = _decode_if_bytes(zeroth.get(piexif.ImageIFD.Model))
-        lens = _decode_if_bytes(exif.get(piexif.ExifIFD.LensModel))
-        focal_length = _rational_to_float(exif.get(piexif.ExifIFD.FocalLength))
-        aperture = _rational_to_float(exif.get(piexif.ExifIFD.FNumber))
-        iso = exif.get(piexif.ExifIFD.ISOSpeedRatings)
-        shutter_speed = _format_shutter(exif.get(piexif.ExifIFD.ExposureTime))
-
-        gps = exif_dict.get("GPS", {})
-        latitude = _format_gps_coordinate(
-            gps.get(piexif.GPSIFD.GPSLatitude),
-            gps.get(piexif.GPSIFD.GPSLatitudeRef)
-        )
-        longitude = _format_gps_coordinate(
-            gps.get(piexif.GPSIFD.GPSLongitude),
-            gps.get(piexif.GPSIFD.GPSLongitudeRef)
-        )
-        altitude_rational = gps.get(piexif.GPSIFD.GPSAltitude)
-        altitude = _rational_to_float(altitude_rational) if altitude_rational is not None else None
-
-        return {
-            "name": name,
-            "filetype": filetype,
-            "directory": directory,
-            "Full path": str(path),
-            "date_taken": date_taken,
-            "time_taken": time_taken,
-            "camera": camera,
-            "lens": lens,
-            "focal_length": focal_length,
-            "aperture": aperture,
-            "iso": iso,
-            "shutter_speed": shutter_speed,
-            "latitude": latitude,
-            "longitude": longitude,
-            "altitude": altitude,
-            "size_bytes": size_bytes,
-            "size_mb": size_mb,
-            "width": width,
-            "height": height,
-        }
-
-    except Exception:
-        return None
-
-
-def analyze_raw(path: Path) -> Optional[Dict]:
-    file_name = path.name
-    name = file_name.rsplit(".", 1)[0]
-    filetype = path.suffix.lower()
-    if filetype not in {".cr2", ".cr3"}:
-        raise ValueError("Not a CR2 or CR3 file")
-    directory = str(path.parent)
-    size_bytes = path.stat().st_size
-    size_mb = round(size_bytes / (1024 * 1024), 2)
-
-    camera = lens = date_taken = time_taken = iso = shutter_speed = aperture = (
-        focal_length
-    ) = None
-    width = height = None
-    with open(path, "rb") as f:
-        with contextlib.redirect_stderr(DEVNULL):
-            tags = exifread.process_file(f, details=False)
-
-    if filetype in {".cr2"}:
-        date_taken_full = _decode_if_bytes(tags.get("EXIF DateTimeOriginal"))
-        if date_taken_full and " " in date_taken_full:
-            date_taken, time_taken = date_taken_full.split(" ", 1)
-        elif date_taken_full:
-            date_taken = date_taken_full
-        camera = _decode_if_bytes(tags.get("Image Model"))
-        lens = _decode_if_bytes(tags.get("EXIF LensModel"))
-
-        focal_length = _rational_to_float(tags.get("EXIF FocalLength"))
-        aperture = _rational_to_float(tags.get("EXIF FNumber"))
-        iso = tags.get("EXIF ISOSpeedRatings")
-        shutter_speed = _decode_if_bytes(tags.get("EXIF ExposureTime"))
-
-        # Dimensions
-        width = tags.get("EXIF ExifImageWidth")
-        height = tags.get("EXIF ExifImageLength")
-        if width:
-            width = int(str(width))
-        if height:
-            height = int(str(height))
-
-    elif filetype in {".cr3"}:
-        mi = MediaInfo.parse(str(path))
-        for track in mi.tracks:
-            if track.track_type == "General":
-                camera = (
-                    getattr(track, "model", None)
-                    or getattr(track, "writing_library", None)
-                    or getattr(track, "encoded_library_name", None)
-                )
-                lens = getattr(track, "lens_model", None)
-                date_taken_full = getattr(track, "tagged_date", None) or getattr(
-                    track, "encoded_date", None
-                )
-                if date_taken_full:
-                    # MediaInfo dates often look like "2026-02-14 14:00:21" or "UTC 2026-02-14 14:00:21"
-                    # We want to normalize to "YYYY:MM:DD HH:MM:SS" if possible for date_taken
-                    # but for now let's just extract time.
-                    date_taken_clean = date_taken_full.replace("UTC", "").strip()
-                    if " " in date_taken_clean:
-                        date_taken, time_taken = date_taken_clean.split(" ", 1)
-                        # Normalize date from YYYY-MM-DD to YYYY:MM:DD if it was from MediaInfo
-                        date_taken = date_taken.replace("-", ":")
-                    else:
-                        date_taken = date_taken_clean.replace("-", ":")
-
-                iso = getattr(track, "ISO", None)
-                aperture = getattr(track, "FNumber", None)
-                shutter_speed = getattr(track, "ExposureTime", None)
-                focal_length = getattr(track, "FocalLength", None)
-            elif track.track_type == "Video":
-                if width is None or (track.width and track.width > width):
-                    width = track.width
-                if height is None or (track.height and track.height > height):
-                    height = track.height
-
-        # Fallback for camera, lens, date, and other EXIF tags using raw byte search and exifread
-        try:
-            with open(path, "rb") as f:
-                # CR3 files often have metadata near the beginning
-                head = f.read(100000)
-
-                # Try to use exifread by finding TIFF headers
-                # CR3 is ISO BMFF, and it contains multiple TIFF-based metadata blocks
-                for header in [b"II\x2a\x00", b"MM\x00\x2a"]:
-                    idx = head.find(header)
-                    while idx != -1:
-                        import io
-
-                        f_tiff = io.BytesIO(head[idx:])
-
-                        with contextlib.redirect_stderr(DEVNULL):
-                            tags = exifread.process_file(f_tiff, details=False)
-                        if tags:
-                            if not camera:
-                                camera = _decode_if_bytes(tags.get("Image Model"))
-                            if not lens:
-                                lens = _decode_if_bytes(
-                                    tags.get("EXIF LensModel")
-                                    or tags.get("Image LensModel")
-                                )
-                            if not date_taken:
-                                date_taken_full = _decode_if_bytes(
-                                    tags.get("EXIF DateTimeOriginal")
-                                    or tags.get("Image DateTime")
-                                )
-                                if date_taken_full and " " in date_taken_full:
-                                    date_taken, time_taken = date_taken_full.split(
-                                        " ", 1
-                                    )
-                                elif date_taken_full:
-                                    date_taken = date_taken_full
-
-                            if not iso:
-                                iso = tags.get("EXIF ISOSpeedRatings") or tags.get(
-                                    "Image ISOSpeedRatings"
-                                )
-                            # Aperture: prefer sensible numeric value
-                            cand_ap = _rational_to_float(
-                                tags.get("EXIF FNumber") or tags.get("Image FNumber")
-                            )
-                            if cand_ap:
-                                aperture = cand_ap
-                            # Shutter speed: prefer a clean fractional like '1/2000'
-                            exp_val = tags.get("EXIF ExposureTime") or tags.get(
-                                "Image ExposureTime"
-                            )
-                            if exp_val:
-                                cand_ss = str(exp_val)
-                                if (not shutter_speed) or (
-                                    not str(shutter_speed).startswith("1/")
-                                    and cand_ss.startswith("1/")
-                                ):
-                                    shutter_speed = cand_ss
-                            # Focal length
-                            cand_fl = _rational_to_float(
-                                tags.get("EXIF FocalLength")
-                                or tags.get("Image FocalLength")
-                            )
-                            if cand_fl:
-                                focal_length = cand_fl
-
-                            if not width:
-                                width = tags.get("EXIF ExifImageWidth") or tags.get(
-                                    "Image ImageWidth"
-                                )
-                            if not height:
-                                height = tags.get("EXIF ExifImageLength") or tags.get(
-                                    "Image ImageLength"
-                                )
-
-                        # Continue scanning all possible TIFF blocks; some early blocks contain placeholder values
-                        idx = head.find(header, idx + 1)
-                    # Do not break early; later blocks may contain the real EXIF values
-
-                # Additional fallback for strings if still missing
-                if not camera:
-                    idx = head.find(b"Canon EOS ")
-                    if idx != -1:
-                        cam_bytes = head[idx:]
-                        null_idx = cam_bytes.find(b"\x00")
-                        if null_idx != -1:
-                            cam_str = cam_bytes[:null_idx].decode(
-                                "utf-8", errors="ignore"
-                            )
-                            if cam_str.startswith("Canon "):
-                                camera = cam_str[6:]
-                            else:
-                                camera = cam_str
-
-                if not lens:
-                    # Look for common lens patterns or specific LensModel tag
-                    # Many Canon lenses start with EF or RF
-                    for pattern in [b"RF", b"EF"]:
-                        idx = head.find(pattern)
-                        if idx != -1:
-                            lens_bytes = head[idx:]
-                            null_idx = lens_bytes.find(b"\x00")
-                            if null_idx != -1:
-                                lens = lens_bytes[:null_idx].decode(
-                                    "utf-8", errors="ignore"
-                                )
-                                break
-
-                if not date_taken:
-                    # Search for date pattern YYYY:MM:DD HH:MM:SS
-                    m = re.search(rb"(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})", head)
-                    if m:
-                        date_taken = m.group(1).decode("utf-8")
-        except Exception:
-            pass
-
-        # Normalize date format
-        if date_taken:
-            date_taken = str(date_taken)
-            date_taken = re.sub(r" UTC$", "", date_taken)
-            # Try YYYY-MM-DD HH:MM:SS
-            m = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", date_taken)
-            if m:
-                dt_obj = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
-                date_taken = dt_obj.strftime("%Y:%m:%d %H:%M:%S")
-            else:
-                # Try YYYY:MM:DD HH:MM:SS (already in correct format)
-                m2 = re.search(r"(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})", date_taken)
-                if m2:
-                    date_taken = m2.group(1)
-
-        # Normalize shutter speed (remove trailing 's')
-        if shutter_speed:
-            shutter_speed = str(shutter_speed).rstrip("s")
-
-        # Normalize ISO
-        if iso:
-            try:
-                iso = int(str(iso))
-            except Exception:
-                iso = None
-
-        # Ensure aperture/focal_length are floats when possible
-        if isinstance(aperture, str):
-            try:
-                aperture = float(aperture)
-            except Exception:
-                pass
-        if isinstance(focal_length, str):
-            try:
-                focal_length = float(focal_length)
-            except Exception:
-                pass
-        # Convert Ratio-like objects to float using helper
-        if focal_length is not None and not isinstance(focal_length, (int, float)):
-            try:
-                focal_length = _rational_to_float(focal_length)
-            except Exception:
-                pass
-
-    # Final normalization just before returning
-    def _to_float(v):
-        if isinstance(v, (int, float)):
-            return float(v)
-        # exifread Tag may wrap the underlying Ratio/number in .values
-        if hasattr(v, "values"):
-            try:
-                return float(v.values[0])
-            except Exception:
-                pass
-        try:
-            return _rational_to_float(v)
-        except Exception:
-            try:
-                return float(str(v))
-            except Exception:
-                return v
-
-    return {
-        "name": name,
-        "filetype": filetype,
-        "directory": directory,
-        "Full path": str(path),
-        "date_taken": date_taken,
-        "time_taken": time_taken,
-        "camera": camera,
-        "lens": lens,
-        "focal_length": _to_float(focal_length) if focal_length is not None else None,
-        "aperture": _to_float(aperture) if aperture is not None else None,
-        "iso": int(str(iso)) if iso else None,
-        "shutter_speed": (
-            str(shutter_speed) + "s" if shutter_speed is not None else None
-        ),
-        "size_bytes": size_bytes,
-        "size_mb": size_mb,
-        "width": int(str(width)) if width is not None else None,
-        "height": int(str(height)) if height is not None else None,
-    }
-
-
-def run_exiftool_batch(file_paths: List[Path]) -> List[Dict]:
-    """Runs ExifTool on a list of files and returns the parsed JSON output."""
+def run_exiftool_batch(file_paths: List[Path], tag_profile: str = "all") -> List[Dict]:
     if not file_paths:
         return []
 
-    # Use a temporary file to avoid command line length limits on Windows (WinError 206)
     with tempfile.NamedTemporaryFile(
         mode="w", delete=False, encoding="utf-8", suffix=".txt"
     ) as tmp:
-        for p in file_paths:
-            tmp.write(str(p) + "\n")
+        for path in file_paths:
+            tmp.write(str(path) + "\n")
         tmp_path = tmp.name
 
-    # Command to run ExifTool:
-    # -j: JSON output
-    # -n: Numeric output for machine readability
-    # -fast2: Faster scanning (skip deep scans)
-    # -m: Ignore minor errors and warnings
-    # -q -q: Suppress informational messages and warnings
-    # -c %.6f: Format GPS as decimals
-    # Explicitly request ONLY the tags used by the application to save time and bandwidth
-    cmd = [
-        "exiftool",
-        "-j",
-        "-n",
-        "-fast2",
-        "-m",
-        "-q",
-        "-q",
-        "-c",
-        "%.6f",
-        "-FileName",
-        "-Directory",
-        "-FileSize",
-        "-DateTimeOriginal",
-        "-CreateDate",
-        "-Model",
-        "-LensModel",
-        "-LensID",
-        "-FocalLength",
-        "-FNumber",
-        "-ISO",
-        "-ExposureTime",
-        "-GPSLatitude",
-        "-GPSLongitude",
-        "-GPSAltitude",
-        "-ImageWidth",
-        "-ImageHeight",
-        "-Duration",
-        "-VideoCodecID",
-        "-CompressorID",
-        "-VideoFrameRate",
-        "-@",
-        tmp_path,
-    ]
+    profile_tags = EXIFTOOL_IMAGE_TAG_ARGS + EXIFTOOL_VIDEO_TAG_ARGS
+    if tag_profile == "image":
+        profile_tags = EXIFTOOL_IMAGE_TAG_ARGS
+    elif tag_profile == "video":
+        profile_tags = EXIFTOOL_VIDEO_TAG_ARGS
+
+    cmd = EXIFTOOL_BASE_ARGS + profile_tags + ["-@", tmp_path]
 
     try:
-        # We don't use check=True because ExifTool returns exit code 1 for minor warnings
         process = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8"
         )
@@ -583,8 +107,8 @@ def run_exiftool_batch(file_paths: List[Path]) -> List[Dict]:
             return []
 
         return json.loads(process.stdout)
-    except Exception as e:
-        logger.error(f"Error running ExifTool: {e}")
+    except Exception as exc:
+        logger.error(f"Error running ExifTool: {exc}")
         return []
     finally:
         if os.path.exists(tmp_path):
@@ -594,38 +118,28 @@ def run_exiftool_batch(file_paths: List[Path]) -> List[Dict]:
                 pass
 
 
-def _map_exiftool_result(exif_item: Dict) -> tuple[str, Dict]:
-    """Maps ExifTool JSON output to the internal metadata format."""
+def _map_exiftool_result(exif_item: Dict) -> tuple[Optional[str], Optional[Dict]]:
     source_file_raw = exif_item.get("SourceFile", "")
     if not source_file_raw:
         return None, None
 
-    # Use os.path instead of Path for better performance in tight loops
     full_path = source_file_raw
     name = os.path.splitext(os.path.basename(source_file_raw))[0]
     filetype = os.path.splitext(source_file_raw)[1].lower()
     directory = exif_item.get("Directory") or os.path.dirname(source_file_raw)
     size_bytes = exif_item.get("FileSize")
-    size_mb = round(size_bytes / (1048576), 2) if size_bytes else 0.0
+    size_mb = round(size_bytes / 1048576, 2) if size_bytes else 0.0
 
-    # Date handling
     date_taken_full = exif_item.get("DateTimeOriginal") or exif_item.get("CreateDate")
     date_taken = None
     time_taken = None
     if date_taken_full:
-        # ExifTool -n returns YYYY:MM:DD HH:MM:SS
         if " " in str(date_taken_full):
             date_taken, time_taken = str(date_taken_full).split(" ", 1)
         else:
             date_taken = str(date_taken_full)
 
-    # Detect category
-    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
-    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
-
-    if filetype in image_extensions:
-        category = "image"
-        # Mapping for images
+    if filetype in IMAGE_EXTENSIONS:
         data = {
             "name": name,
             "filetype": filetype,
@@ -647,22 +161,20 @@ def _map_exiftool_result(exif_item: Dict) -> tuple[str, Dict]:
             "width": exif_item.get("ImageWidth") or exif_item.get("ExifImageWidth"),
             "height": exif_item.get("ImageHeight") or exif_item.get("ExifImageHeight"),
         }
-        # Format shutter speed to fractional if < 1
+
         if data["shutter_speed"] and isinstance(data["shutter_speed"], (int, float)):
             if data["shutter_speed"] < 1:
-                den = round(1 / data["shutter_speed"])
-                data["shutter_speed"] = f"1/{den}s"
+                denominator = round(1 / data["shutter_speed"])
+                data["shutter_speed"] = f"1/{denominator}s"
             else:
                 data["shutter_speed"] = f"{data['shutter_speed']}s"
 
-        return category, data
+        return "image", data
 
-    elif filetype in video_extensions:
-        category = "video"
-        # Mapping for videos
+    if filetype in VIDEO_EXTENSIONS:
         duration = exif_item.get("Duration")
         if duration and isinstance(duration, (int, float)):
-            duration = duration * 1000  # convert s to ms
+            duration = duration * 1000
 
         data = {
             "name": name,
@@ -679,170 +191,151 @@ def _map_exiftool_result(exif_item: Dict) -> tuple[str, Dict]:
             "codec": exif_item.get("VideoCodecID") or exif_item.get("CompressorID"),
             "frame_rate": exif_item.get("VideoFrameRate"),
         }
-        return category, data
+        return "video", data
 
-    else:
-        category = "other"
-        data = {
-            "name": name,
-            "filetype": filetype,
-            "directory": directory,
-            "Full path": full_path,
-            "size_bytes": size_bytes,
-            "size_mb": size_mb,
-        }
-        return category, data
+    return "other", {
+        "name": name,
+        "filetype": filetype,
+        "directory": directory,
+        "Full path": full_path,
+        "size_bytes": size_bytes,
+        "size_mb": size_mb,
+    }
 
 
-def analyze_any(file_path: Path):
-    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
-    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
+def _empty_df(type_name: str) -> pd.DataFrame:
+    if type_name == "image":
+        return pd.DataFrame(
+            columns=[
+                "name",
+                "filetype",
+                "directory",
+                "Full path",
+                "date_taken",
+                "time_taken",
+                "camera",
+                "lens",
+                "focal_length",
+                "aperture",
+                "iso",
+                "shutter_speed",
+                "latitude",
+                "longitude",
+                "altitude",
+                "size_bytes",
+                "size (MB)",
+                "width",
+                "height",
+            ]
+        )
+    if type_name == "video":
+        return pd.DataFrame(
+            columns=[
+                "name",
+                "filetype",
+                "directory",
+                "Full path",
+                "date_taken",
+                "time_taken",
+                "size_bytes",
+                "size (MB)",
+                "width",
+                "height",
+                "duration_ms",
+                "codec",
+                "frame_rate",
+            ]
+        )
+    return pd.DataFrame(
+        columns=[
+            "name",
+            "filetype",
+            "directory",
+            "Full path",
+            "size_bytes",
+            "size (MB)",
+        ]
+    )
 
-    ext = file_path.suffix.lower()
-    if ext in image_extensions:
-        return "image", analyze_image(file_path)
-    elif ext in video_extensions:
-        return "video", analyze_video(file_path)
-    else:
-        return "other", analyze_other(file_path)
+
+def _format_df(df: pd.DataFrame, type_name: str) -> pd.DataFrame:
+    if df.empty:
+        return _empty_df(type_name)
+
+    df = df.map(clean_excel_unsafe)
+    if "size_bytes" in df.columns:
+        df["size (MB)"] = (df["size_bytes"] / 1048576).round(2)
+    if "size_mb" in df.columns:
+        df = df.drop(columns=["size_mb"], errors="ignore")
+
+    if type_name == "image":
+        for col in ["aperture", "focal_length", "altitude"]:
+            if col in df.columns:
+                df[col] = df[col].map(rational_to_float)
+
+        if "date_taken" in df.columns:
+            df["date_taken"] = pd.to_datetime(
+                df["date_taken"], errors="coerce", format="%Y:%m:%d"
+            ).dt.date
+
+    return df
 
 
-def analyze_directories(
-    paths: List[Path],
+def analyze_files(
+    file_paths: List[Path],
     stop_event: Optional[threading.Event] = None,
     pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
-    use_exiftool: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    logger.info(f"Starting directory analysis for: {[str(p) for p in paths]}")
     all_images = []
     all_videos = []
     all_others = []
-    files_to_process = []
 
-    def format_df(df, type_name):
-        if df.empty:
-            if type_name == "image":
-                return pd.DataFrame(
-                    columns=[
-                        "name",
-                        "filetype",
-                        "directory",
-                        "Full path",
-                        "date_taken",
-                        "time_taken",
-                        "camera",
-                        "lens",
-                        "focal_length",
-                        "aperture",
-                        "iso",
-                        "shutter_speed",
-                        "latitude",
-                        "longitude",
-                        "altitude",
-                        "size_bytes",
-                        "size (MB)",
-                        "width",
-                        "height",
-                    ]
-                )
-            elif type_name == "video":
-                return pd.DataFrame(
-                    columns=[
-                        "name",
-                        "filetype",
-                        "directory",
-                        "Full path",
-                        "date_taken",
-                        "time_taken",
-                        "size_bytes",
-                        "size (MB)",
-                        "width",
-                        "height",
-                        "duration_ms",
-                        "codec",
-                        "frame_rate",
-                    ]
-                )
-            else:
-                return pd.DataFrame(
-                    columns=[
-                        "name",
-                        "filetype",
-                        "directory",
-                        "Full path",
-                        "size_bytes",
-                        "size (MB)",
-                    ]
-                )
+    image_files: List[Path] = []
+    video_files: List[Path] = []
 
-        df = df.map(clean_excel_unsafe)
-        if "size_bytes" in df.columns:
-            df["size (MB)"] = (df["size_bytes"] / 1048576).round(2)
-        if "size_mb" in df.columns:
-            df = df.drop(columns=["size_mb"], errors="ignore")
+    for file_path in file_paths:
+        suffix = file_path.suffix.lower()
+        if suffix in IMAGE_EXTENSIONS:
+            image_files.append(file_path)
+        elif suffix in VIDEO_EXTENSIONS:
+            video_files.append(file_path)
+        else:
+            result = analyze_other(file_path)
+            if result:
+                all_others.append(result)
 
-        if type_name == "image":
-            for col in ["aperture", "focal_length", "altitude"]:
-                if col in df.columns:
-                    df[col] = df[col].map(rational_to_float)
-
-            if "date_taken" in df.columns:
-                df["date_taken"] = pd.to_datetime(
-                    df["date_taken"], errors="coerce", format="%Y:%m:%d"
-                ).dt.date
-        return df
-
-    for path in paths:
-        for dirpath, dir_names, filenames in os.walk(path, topdown=False):
-            if stop_event and stop_event.is_set():
-                logger.warning("Directory analysis stopped by user during walk.")
-                return (
-                    format_df(pd.DataFrame(), "image"),
-                    format_df(pd.DataFrame(), "video"),
-                    format_df(pd.DataFrame(), "other"),
-                )
-
-            if pause_event:
-                while pause_event.is_set():
-                    if stop_event and stop_event.is_set():
-                        return (
-                            format_df(pd.DataFrame(), "image"),
-                            format_df(pd.DataFrame(), "video"),
-                            format_df(pd.DataFrame(), "other"),
-                        )
-                    threading.Event().wait(0.1)
-
-            logger.info(f"Analyzing directory: {dirpath}")
-            for f in filenames:
-                fp = Path(dirpath) / f
-                files_to_process.append(fp)
-
-    total_files = len(files_to_process)
+    total_files = len(image_files) + len(video_files) + len(all_others)
     if total_files == 0:
-        logger.warning("No files found to analyze.")
-        return (
-            format_df(pd.DataFrame(), "image"),
-            format_df(pd.DataFrame(), "video"),
-            format_df(pd.DataFrame(), "other"),
-        )
+        return _empty_df("image"), _empty_df("video"), _empty_df("other")
 
-    if use_exiftool:
-        logger.info(
-            f"Extracting metadata from {total_files:,} files in parallel batches with ExifTool..."
-        )
-        batch_size = 5000
-        # Determine number of workers based on CPU count
-        num_workers = min(os.cpu_count() or 4, (total_files // batch_size) + 1)
+    processed_count = len(all_others)
+    if progress_callback:
+        progress_callback(processed_count / total_files)
+
+    def _run_profile_batches(file_list: List[Path], tag_profile: str) -> None:
+        nonlocal processed_count
+
+        if not file_list:
+            return
+
+        max_cpu = os.cpu_count() or 4
+        min_batch_size = 250
+        max_workers_by_files = max(1, len(file_list) // min_batch_size)
+        num_workers = min(8, max_cpu, max_workers_by_files)
+        batch_size = max(1, math.ceil(len(file_list) / num_workers))
+        batches = [
+            file_list[i : i + batch_size]
+            for i in range(0, len(file_list), batch_size)
+        ]
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-            batch_list = [
-                files_to_process[i : i + batch_size]
-                for i in range(0, total_files, batch_size)
-            ]
-            futures = [executor.submit(run_exiftool_batch, b) for b in batch_list]
+            future_to_batch_size = {
+                executor.submit(run_exiftool_batch, batch, tag_profile): len(batch)
+                for batch in batches
+            }
 
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            for future in concurrent.futures.as_completed(future_to_batch_size):
                 if stop_event and stop_event.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
                     break
@@ -857,59 +350,66 @@ def analyze_directories(
                         break
 
                 exif_results = future.result()
+                batch_size_done = future_to_batch_size[future]
                 for exif_item in exif_results:
                     category, result = _map_exiftool_result(exif_item)
-                    if result:
-                        if category == "image":
-                            all_images.append(result)
-                        elif category == "video":
-                            all_videos.append(result)
-                        else:
-                            all_others.append(result)
-
-                if progress_callback:
-                    progress_callback(min((i + 1) * batch_size / total_files, 1.0))
-    else:
-        logger.info(f"Extracting metadata from {total_files:,} files one-by-one (original mode)...")
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(analyze_any, fp) for fp in files_to_process]
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                if stop_event and stop_event.is_set():
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    return (
-                        format_df(pd.DataFrame(), "image"),
-                        format_df(pd.DataFrame(), "video"),
-                        format_df(pd.DataFrame(), "other"),
-                    )
-
-                if pause_event:
-                    while pause_event.is_set():
-                        if stop_event and stop_event.is_set():
-                            executor.shutdown(wait=False, cancel_futures=True)
-                            return (
-                                format_df(pd.DataFrame(), "image"),
-                                format_df(pd.DataFrame(), "video"),
-                                format_df(pd.DataFrame(), "other"),
-                            )
-                        threading.Event().wait(0.1)
-
-                category, result = future.result()
-                if result:
+                    if not result:
+                        continue
                     if category == "image":
                         all_images.append(result)
                     elif category == "video":
                         all_videos.append(result)
                     else:
                         all_others.append(result)
-                if progress_callback:
-                    progress_callback((i + 1) / total_files)
 
-    df_images = pd.DataFrame(all_images)
-    df_videos = pd.DataFrame(all_videos)
-    df_others = pd.DataFrame(all_others)
+                processed_count += batch_size_done
+                if progress_callback:
+                    progress_callback(min(processed_count / total_files, 1.0))
+
+    _run_profile_batches(image_files, "image")
+    _run_profile_batches(video_files, "video")
 
     return (
-        format_df(df_images, "image"),
-        format_df(df_videos, "video"),
-        format_df(df_others, "other"),
+        _format_df(pd.DataFrame(all_images), "image"),
+        _format_df(pd.DataFrame(all_videos), "video"),
+        _format_df(pd.DataFrame(all_others), "other"),
+    )
+
+
+def analyze_directories(
+    paths: List[Path],
+    stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    logger.info(f"Starting directory analysis for: {[str(p) for p in paths]}")
+
+    files_to_process: List[Path] = []
+    for path in paths:
+        for dirpath, _, filenames in os.walk(path, topdown=False):
+            if stop_event and stop_event.is_set():
+                logger.warning("Directory analysis stopped by user during walk.")
+                return _empty_df("image"), _empty_df("video"), _empty_df("other")
+
+            if pause_event:
+                while pause_event.is_set():
+                    if stop_event and stop_event.is_set():
+                        return _empty_df("image"), _empty_df("video"), _empty_df("other")
+                    threading.Event().wait(0.1)
+
+            for filename in filenames:
+                files_to_process.append(Path(dirpath) / filename)
+
+    if not files_to_process:
+        logger.warning("No files found to analyze.")
+        return _empty_df("image"), _empty_df("video"), _empty_df("other")
+
+    logger.info(
+        f"Extracting metadata from {len(files_to_process):,} files with ExifTool batch mode..."
+    )
+    return analyze_files(
+        files_to_process,
+        stop_event=stop_event,
+        pause_event=pause_event,
+        progress_callback=progress_callback,
     )

@@ -1,14 +1,15 @@
+import os
 import re
 import shutil
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, List, Literal, Optional
 
 from loguru import logger
 
-from gallery_inspector.analysis import analyze_image, analyze_video
+from gallery_inspector.analysis import analyze_files
 
 OrderType = Literal["Year/Month", "Year", "Camera", "Lens", "Camera/Lens"]
 
@@ -61,29 +62,42 @@ def generated_directory_from_list(
     )
 
 
-def _extract_metadata(file: Path, is_image: bool, is_video: bool) -> Optional[dict]:
-    if is_image:
-        raw_metadata = analyze_image(file)
-    elif is_video:
-        raw_metadata = analyze_video(file)
-    else:
-        return None
+def _normalize_path(path: str | Path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
 
+
+def _extract_year_month(date_value) -> tuple[Optional[str], Optional[str]]:
+    if isinstance(date_value, date):
+        return str(date_value.year), f"{date_value.month:02d}"
+
+    if not date_value:
+        return None, None
+
+    if isinstance(date_value, str):
+        try:
+            if ":" in date_value:
+                parts = date_value.split(":")
+            elif "-" in date_value:
+                parts = date_value.split("-")
+            else:
+                parts = []
+            if len(parts) >= 2:
+                return parts[0], parts[1]
+        except Exception:
+            return None, None
+
+    return None, None
+
+
+def _metadata_for_organization(
+    filetype: str, raw_metadata: Optional[dict]
+) -> Optional[dict]:
     if not raw_metadata:
         return None
 
-    year, month = None, None
-    date_str = raw_metadata.get("date_taken")
-    if date_str:
-        try:
-            parts = date_str.split(":")
-            if len(parts) >= 2:
-                year = parts[0]
-                month = parts[1]
-        except Exception:
-            pass
+    year, month = _extract_year_month(raw_metadata.get("date_taken"))
 
-    if is_image:
+    if filetype == "image":
         model = raw_metadata.get("camera")
         lens = raw_metadata.get("lens")
         if year or month or model or lens:
@@ -93,12 +107,15 @@ def _extract_metadata(file: Path, is_image: bool, is_video: bool) -> Optional[di
                 "Model": sanitize_folder_name(model) if model else None,
                 "Lens": sanitize_folder_name(lens) if lens else None,
             }
-    elif is_video:
+        return None
+
+    if filetype == "video":
         if year or month:
             return {
                 "Year": year,
                 "Month": month,
             }
+        return None
 
     return None
 
@@ -110,6 +127,7 @@ def organize_files_by_options(
     stop_event: Optional[threading.Event] = None,
     pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
+    metadata_lookup: Optional[dict[str, tuple[str, dict]]] = None,
 ) -> None:
     total_files = len(files_list)
     if total_files == 0:
@@ -119,18 +137,36 @@ def organize_files_by_options(
     logger.info(f"Organizing {total_files} files into {output}...")
     successful_copies = 0
     excluded_files = []
+    extraction_weight = 0.0 if metadata_lookup is not None else 0.35
 
-    image_extensions = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".cr2",
-        ".nef",
-        ".tiff",
-        ".arw",
-        ".cr3",
-    }
-    video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
+    if metadata_lookup is None:
+        extraction_progress = None
+        if progress_callback:
+            extraction_progress = (
+                lambda value: progress_callback(
+                    min(value * extraction_weight, extraction_weight)
+                )
+            )
+
+        df_images, df_videos, df_others = analyze_files(
+            files_list,
+            stop_event=stop_event,
+            pause_event=pause_event,
+            progress_callback=extraction_progress,
+        )
+
+        metadata_lookup = {}
+        for filetype, df in [
+            ("image", df_images),
+            ("video", df_videos),
+            ("other", df_others),
+        ]:
+            if df.empty:
+                continue
+            for row in df.to_dict("records"):
+                full_path = row.get("Full path")
+                if full_path:
+                    metadata_lookup[_normalize_path(full_path)] = (filetype, row)
 
     for i, file in enumerate(files_list):
         if stop_event and stop_event.is_set():
@@ -150,9 +186,14 @@ def organize_files_by_options(
         # Process single file logic inline
         status = "error"
         try:
-            suffix = file.suffix.lower()
-            is_image = suffix in image_extensions
-            is_video = suffix in video_extensions
+            metadata_entry = metadata_lookup.get(_normalize_path(file))
+            if metadata_entry:
+                filetype, raw_metadata = metadata_entry
+            else:
+                filetype, raw_metadata = "other", None
+
+            is_image = filetype == "image"
+            is_video = filetype == "video"
 
             target_dir = output
 
@@ -162,11 +203,9 @@ def organize_files_by_options(
             else:
                 target_dir = target_dir / "Other"
 
-            metadata = _extract_metadata(file, is_image, is_video)
+            metadata = _metadata_for_organization(filetype, raw_metadata)
 
-            if options.by_media_type and not (is_image or is_video):
-                ...
-            elif metadata is None:
+            if metadata is None:
                 target_dir = target_dir / "No Info"
             else:
                 if is_video and not options.structure:
@@ -217,7 +256,9 @@ def organize_files_by_options(
                 logger.info(f"File skipped (already exists): {file}")
 
         if progress_callback:
-            progress_callback((i + 1) / total_files)
+            progress_callback(
+                extraction_weight + ((i + 1) / total_files) * (1.0 - extraction_weight)
+            )
 
     _final_report(total_files, successful_copies, excluded_files)
 

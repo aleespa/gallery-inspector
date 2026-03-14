@@ -7,7 +7,7 @@ from typing import Optional, List, Callable, Tuple
 
 from loguru import logger
 
-from gallery_inspector.analysis import analyze_any
+from gallery_inspector.analysis import analyze_files
 from gallery_inspector.generate import Options, organize_files_by_options
 
 
@@ -39,6 +39,32 @@ def _parse_shutter_speed(s: str) -> float:
         return 0.0
 
 
+def _normalize_path(path: str | Path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _parse_date_value(value) -> Optional[date]:
+    if isinstance(value, date):
+        return value
+
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if " " in candidate:
+            candidate = candidate.split(" ", 1)[0]
+
+        try:
+            if ":" in candidate:
+                return date(*map(int, candidate.split(":")))
+            if "-" in candidate:
+                return date(*map(int, candidate.split("-")))
+        except (ValueError, TypeError):
+            return None
+
+    return None
+
+
 def filter_files(
     files: List[str | Path],
     output_dir: str | Path,
@@ -55,6 +81,41 @@ def filter_files(
     filtered_files = []
     total_files = len(all_files)
 
+    extraction_weight = 0.35
+    extraction_progress = None
+    if progress_callback:
+        extraction_progress = (
+            lambda value: progress_callback(min(value * extraction_weight, extraction_weight))
+        )
+
+    df_images, df_videos, df_others = analyze_files(
+        all_files,
+        stop_event=stop_event,
+        pause_event=pause_event,
+        progress_callback=extraction_progress,
+    )
+
+    metadata_lookup: dict[str, tuple[str, dict]] = {}
+    for filetype, df in [
+        ("image", df_images),
+        ("video", df_videos),
+        ("other", df_others),
+    ]:
+        if df.empty:
+            continue
+        for row in df.to_dict("records"):
+            full_path = row.get("Full path")
+            if full_path:
+                metadata_lookup[_normalize_path(full_path)] = (filetype, row)
+
+    if stop_event and stop_event.is_set():
+        logger.warning("Filtering stopped by user during metadata extraction.")
+        return
+
+    normalized_extensions = (
+        [e.lower() for e in query.extensions] if query.extensions else None
+    )
+
     for i, file in enumerate(all_files):
         if stop_event and stop_event.is_set():
             logger.warning("Organization stopped by user.")
@@ -70,18 +131,27 @@ def filter_files(
                 logger.warning("Organization stopped by user during pause.")
                 break
 
-        filetype, metadata = analyze_any(file)
+        metadata_entry = metadata_lookup.get(_normalize_path(file))
+        if metadata_entry:
+            filetype, metadata = metadata_entry
+        else:
+            filetype, metadata = "other", None
 
         if not metadata:
             if progress_callback:
-                progress_callback((i + 1) / total_files)
+                progress_callback(
+                    extraction_weight + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                )
             continue
 
         # Filter by filetype
         if query.filetypes:
             if filetype not in query.filetypes:
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         # If photo options are present, only allow images
@@ -95,26 +165,25 @@ def filter_files(
 
         if has_photo_options and filetype != "image":
             if progress_callback:
-                progress_callback((i + 1) / total_files)
+                progress_callback(
+                    extraction_weight + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                )
             continue
 
         # Filter by extensions
-        if query.extensions:
-            if file.suffix.lower() not in [e.lower() for e in query.extensions]:
+        if normalized_extensions:
+            if file.suffix.lower() not in normalized_extensions:
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         # Filter by date taken / modified
         if query.date_range:
             start_date, end_date = query.date_range
-            date_taken_str = metadata.get("date_taken")
-            dt = None
-            if date_taken_str:
-                try:
-                    dt = date(*map(int, date_taken_str.split(":")))
-                except (ValueError, TypeError):
-                    pass
+            dt = _parse_date_value(metadata.get("date_taken"))
 
             if dt is None:
                 # Fallback to modification date
@@ -127,16 +196,25 @@ def filter_files(
             if dt:
                 if start_date and dt < start_date:
                     if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                        progress_callback(
+                            extraction_weight
+                            + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                        )
                     continue
                 if end_date and dt > end_date:
                     if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                        progress_callback(
+                            extraction_weight
+                            + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                        )
                     continue
             else:
                 # If still no date, skip
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         # Filter by camera
@@ -144,7 +222,10 @@ def filter_files(
             camera = metadata.get("camera")
             if not camera or camera not in query.cameras:
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         # Filter by lens
@@ -152,7 +233,10 @@ def filter_files(
             lens = metadata.get("lens")
             if not lens or lens not in query.lenses:
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         # Filter by aperture
@@ -162,15 +246,24 @@ def filter_files(
             if aperture is not None:
                 if min_ap is not None and aperture < min_ap:
                     if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                        progress_callback(
+                            extraction_weight
+                            + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                        )
                     continue
                 if max_ap is not None and aperture > max_ap:
                     if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                        progress_callback(
+                            extraction_weight
+                            + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                        )
                     continue
             else:
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         # Filter by ISO
@@ -180,15 +273,24 @@ def filter_files(
             if iso is not None:
                 if min_iso is not None and iso < min_iso:
                     if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                        progress_callback(
+                            extraction_weight
+                            + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                        )
                     continue
                 if max_iso is not None and iso > max_iso:
                     if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                        progress_callback(
+                            extraction_weight
+                            + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                        )
                     continue
             else:
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         # Filter by shutter speed
@@ -201,23 +303,40 @@ def filter_files(
                     min_ss = _parse_shutter_speed(min_ss_str)
                     if ss_val < min_ss:
                         if progress_callback:
-                            progress_callback((i + 1) / total_files)
+                            progress_callback(
+                                extraction_weight
+                                + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                            )
                         continue
                 if max_ss_str:
                     max_ss = _parse_shutter_speed(max_ss_str)
                     if ss_val > max_ss:
                         if progress_callback:
-                            progress_callback((i + 1) / total_files)
+                            progress_callback(
+                                extraction_weight
+                                + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                            )
                         continue
             else:
                 if progress_callback:
-                    progress_callback((i + 1) / total_files)
+                    progress_callback(
+                        extraction_weight
+                        + ((i + 1) / total_files) * (1.0 - extraction_weight)
+                    )
                 continue
 
         filtered_files.append(file)
         if progress_callback:
-            progress_callback((i + 1) / total_files)
+            progress_callback(
+                extraction_weight + ((i + 1) / total_files) * (1.0 - extraction_weight)
+            )
 
     organize_files_by_options(
-        filtered_files, output_dir, options, stop_event, pause_event, progress_callback
+        filtered_files,
+        output_dir,
+        options,
+        stop_event,
+        pause_event,
+        progress_callback,
+        metadata_lookup=metadata_lookup,
     )

@@ -1,8 +1,16 @@
 import time
 import argparse
-import sys
 from pathlib import Path
 from gallery_inspector.analysis import analyze_directories
+
+
+def _run_once(path: Path):
+    start_time = time.time()
+    df_images, df_videos, df_others = analyze_directories([path])
+    elapsed = time.time() - start_time
+    total_files = len(df_images) + len(df_videos) + len(df_others)
+    return elapsed, total_files, df_images, df_videos, df_others
+
 
 def run_benchmark(directory_path: str):
     path = Path(directory_path)
@@ -13,44 +21,30 @@ def run_benchmark(directory_path: str):
     print(f"\nBenchmarking metadata extraction for: {path.absolute()}")
     print("-" * 60)
 
-    # 1. Benchmark ExifTool Batch
-    print("Running with ExifTool (Batch Mode)...")
-    start_time = time.time()
-    df_images_exif, df_videos_exif, df_others_exif = analyze_directories([path], use_exiftool=True)
-    exif_time = time.time() - start_time
-    total_files_exif = len(df_images_exif) + len(df_videos_exif) + len(df_others_exif)
-    
-    # 2. Benchmark Original Mode
-    print("Running with Original Mode (One-by-one)...")
-    start_time = time.time()
-    df_images_orig, df_videos_orig, df_others_orig = analyze_directories([path], use_exiftool=False)
-    orig_time = time.time() - start_time
-    total_files_orig = len(df_images_orig) + len(df_videos_orig) + len(df_others_orig)
+    print("Running ExifTool batch benchmark (3 passes)...")
+    pass_1, total_files, df_images, df_videos, df_others = _run_once(path)
+    pass_2, _, _, _, _ = _run_once(path)
+    pass_3, _, _, _, _ = _run_once(path)
+    avg_time = (pass_1 + pass_2 + pass_3) / 3
 
     # Results Comparison
     print("\nBenchmark Results:")
     print("-" * 60)
-    print(f"Total files detected: {total_files_exif}")
+    print(f"Total files detected: {total_files}")
+    print(f"Run times: {pass_1:.2f}s, {pass_2:.2f}s, {pass_3:.2f}s")
     print(f"{'Method':<25} | {'Total Time':<12} | {'Avg per file':<12}")
     print("-" * 60)
-    print(f"{'ExifTool (Batch)':<25} | {exif_time:>10.2f}s | {exif_time/total_files_exif:>10.4f}s" if total_files_exif > 0 else "N/A")
-    print(f"{'Original (One-by-one)':<25} | {orig_time:>10.2f}s | {orig_time/total_files_orig:>10.4f}s" if total_files_orig > 0 else "N/A")
+    print(
+        f"{'ExifTool (Batch)':<25} | {avg_time:>10.2f}s | {avg_time/total_files:>10.4f}s"
+        if total_files > 0
+        else "N/A"
+    )
     print("-" * 60)
-    
-    if exif_time > 0:
-        speedup = orig_time / exif_time
-        print(f"Speedup: {speedup:.2f}x faster with ExifTool batching.")
-    
-    # Data Integrity Check
-    print("\nData Integrity Check:")
-    print(f"Images: ExifTool={len(df_images_exif)}, Original={len(df_images_orig)}")
-    print(f"Videos: ExifTool={len(df_videos_exif)}, Original={len(df_videos_orig)}")
-    print(f"Others: ExifTool={len(df_others_exif)}, Original={len(df_others_orig)}")
-    
-    if len(df_images_exif) != len(df_images_orig) or len(df_videos_exif) != len(df_videos_orig):
-        print("WARNING: File counts mismatch between methods!")
-    else:
-        print("SUCCESS: File counts match.")
+
+    print("\nBreakdown:")
+    print(f"Images: {len(df_images)}")
+    print(f"Videos: {len(df_videos)}")
+    print(f"Others: {len(df_others)}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark metadata extraction methods.")
