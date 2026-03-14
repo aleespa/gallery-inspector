@@ -56,6 +56,46 @@ EXIFTOOL_VIDEO_TAG_ARGS = [
 ]
 
 
+def _choose_exiftool_plan(file_count: int) -> tuple[int, int]:
+    max_cpu = os.cpu_count() or 4
+    if file_count < 10000:
+        # Preserve high parallelism for smaller scans.
+        min_batch_size = 250
+        workers_by_files = max(1, file_count // min_batch_size)
+        workers = min(8, max_cpu, workers_by_files)
+        batch_size = max(1, math.ceil(file_count / workers))
+        return workers, batch_size
+
+    if file_count < 30000:
+        batch_size = 2500
+        max_workers = 6
+    else:
+        # Reduce ExifTool process fan-out on very large scans to avoid disk thrashing.
+        batch_size = 3000
+        max_workers = 3
+
+    num_batches = max(1, math.ceil(file_count / batch_size))
+    workers = min(max_workers, max_cpu, num_batches)
+
+    env_workers = os.getenv("GI_EXIFTOOL_MAX_WORKERS")
+    if env_workers:
+        try:
+            workers = max(1, min(workers, int(env_workers)))
+        except ValueError:
+            pass
+
+    env_batch_size = os.getenv("GI_EXIFTOOL_BATCH_SIZE")
+    if env_batch_size:
+        try:
+            batch_size = max(100, int(env_batch_size))
+            num_batches = max(1, math.ceil(file_count / batch_size))
+            workers = min(workers, num_batches)
+        except ValueError:
+            pass
+
+    return workers, batch_size
+
+
 def analyze_other(path: Path) -> Optional[Dict]:
     try:
         file_name = path.name
@@ -262,7 +302,11 @@ def _format_df(df: pd.DataFrame, type_name: str) -> pd.DataFrame:
     if df.empty:
         return _empty_df(type_name)
 
-    df = df.map(clean_excel_unsafe)
+    # Cleaning object/string columns only is significantly faster on large datasets.
+    object_columns = df.select_dtypes(include=["object", "string"]).columns
+    for col in object_columns:
+        df[col] = df[col].map(clean_excel_unsafe)
+
     if "size_bytes" in df.columns:
         df["size (MB)"] = (df["size_bytes"] / 1048576).round(2)
     if "size_mb" in df.columns:
@@ -319,11 +363,7 @@ def analyze_files(
         if not file_list:
             return
 
-        max_cpu = os.cpu_count() or 4
-        min_batch_size = 250
-        max_workers_by_files = max(1, len(file_list) // min_batch_size)
-        num_workers = min(8, max_cpu, max_workers_by_files)
-        batch_size = max(1, math.ceil(len(file_list) / num_workers))
+        num_workers, batch_size = _choose_exiftool_plan(len(file_list))
         batches = [
             file_list[i : i + batch_size]
             for i in range(0, len(file_list), batch_size)

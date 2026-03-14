@@ -8,10 +8,12 @@ from typing import List, Tuple
 
 from loguru import logger
 
+_EXCEL_UNSAFE_CHARS_RE = re.compile(r"[\x00-\x1F\x7F-\x9F]")
+
 
 def clean_excel_unsafe(val):
     if isinstance(val, str):
-        return re.sub(r"[\x00-\x1F\x7F-\x9F]", "", val)
+        return _EXCEL_UNSAFE_CHARS_RE.sub("", val)
     return val
 
 
