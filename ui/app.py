@@ -16,6 +16,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+import pandas as pd
 from loguru import logger
 
 # from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -330,6 +331,163 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
     def get_filter_query(self):
         return self.filter_options_frame.get_query()
 
+    def _is_query_empty(self, query):
+        """Check if the filter query has any active filters."""
+        if not query:
+            return True
+        return not (
+            query.filetypes
+            or query.extensions
+            or query.date_range
+            or query.cameras
+            or query.lenses
+            or query.aperture_range
+            or query.iso_range
+            or query.shutter_speed_range
+        )
+
+    def _analyze_with_filters(self, all_files, query):
+        """Analyze files and filter results based on query."""
+        import os
+        from gallery_inspector.analysis import analyze_files
+        from gallery_inspector.filtering import _normalize_path, _parse_date_value, _parse_shutter_speed
+
+        # First, analyze all files to get metadata
+        df_images, df_videos, df_others = analyze_files(
+            all_files,
+            stop_event=self.stop_event,
+            pause_event=self.pause_event,
+            progress_callback=self.update_progress,
+        )
+
+        if self.stop_event.is_set():
+            return df_images, df_videos, df_others
+
+        # Build metadata lookup for filtering
+        metadata_lookup = {}
+        for filetype, df in [("image", df_images), ("video", df_videos), ("other", df_others)]:
+            if df.empty:
+                continue
+            for row in df.to_dict("records"):
+                full_path = row.get("Full path")
+                if full_path:
+                    metadata_lookup[_normalize_path(full_path)] = (filetype, row)
+
+        # Apply filters to each dataframe
+        normalized_extensions = (
+            [e.lower() for e in query.extensions] if query.extensions else None
+        )
+
+        def _should_keep_file(file_path, filetype, metadata):
+            """Check if a file matches the filter criteria."""
+            if not metadata:
+                return False
+
+            # Filter by filetype
+            if query.filetypes and filetype not in query.filetypes:
+                return False
+
+            # Photo-specific filters
+            has_photo_options = (
+                query.cameras or query.lenses or query.aperture_range
+                or query.iso_range or query.shutter_speed_range
+            )
+            if has_photo_options and filetype != "image":
+                return False
+
+            # Filter by extensions
+            if normalized_extensions:
+                ext = Path(file_path).suffix.lower()
+                if ext not in normalized_extensions:
+                    return False
+
+            # Filter by date
+            if query.date_range:
+                start_date, end_date = query.date_range
+                dt = _parse_date_value(metadata.get("date_taken"))
+                if dt:
+                    if start_date and dt < start_date:
+                        return False
+                    if end_date and dt > end_date:
+                        return False
+                else:
+                    return False
+
+            # Filter by camera
+            if query.cameras:
+                camera = metadata.get("camera")
+                if not camera or camera not in query.cameras:
+                    return False
+
+            # Filter by lens
+            if query.lenses:
+                lens = metadata.get("lens")
+                if not lens or lens not in query.lenses:
+                    return False
+
+            # Filter by aperture
+            if query.aperture_range:
+                min_ap, max_ap = query.aperture_range
+                aperture = metadata.get("aperture")
+                if aperture is None:
+                    return False
+                if min_ap is not None and aperture < min_ap:
+                    return False
+                if max_ap is not None and aperture > max_ap:
+                    return False
+
+            # Filter by ISO
+            if query.iso_range:
+                min_iso, max_iso = query.iso_range
+                iso = metadata.get("iso")
+                if iso is None:
+                    return False
+                if min_iso is not None and iso < min_iso:
+                    return False
+                if max_iso is not None and iso > max_iso:
+                    return False
+
+            # Filter by shutter speed
+            if query.shutter_speed_range:
+                min_ss_str, max_ss_str = query.shutter_speed_range
+                ss_str = metadata.get("shutter_speed")
+                if not ss_str:
+                    return False
+                ss_val = _parse_shutter_speed(ss_str)
+                if min_ss_str:
+                    min_ss = _parse_shutter_speed(min_ss_str)
+                    if ss_val < min_ss:
+                        return False
+                if max_ss_str:
+                    max_ss = _parse_shutter_speed(max_ss_str)
+                    if ss_val > max_ss:
+                        return False
+
+            return True
+
+        # Filter each dataframe
+        filtered_images = []
+        filtered_videos = []
+        filtered_others = []
+
+        for file in all_files:
+            metadata_entry = metadata_lookup.get(_normalize_path(file))
+            if metadata_entry:
+                filetype, metadata = metadata_entry
+                if _should_keep_file(file, filetype, metadata):
+                    if filetype == "image":
+                        filtered_images.append(metadata)
+                    elif filetype == "video":
+                        filtered_videos.append(metadata)
+                    else:
+                        filtered_others.append(metadata)
+
+        return (
+            pd.DataFrame(filtered_images) if filtered_images else pd.DataFrame(),
+            pd.DataFrame(filtered_videos) if filtered_videos else pd.DataFrame(),
+            pd.DataFrame(filtered_others) if filtered_others else pd.DataFrame(),
+        )
+
     # ── Run ───────────────────────────────────────────────────────────────────
 
     def run_process(self, func):
@@ -368,21 +526,40 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
         ).start()
 
     def execute(self, func, input_paths, output_path, btn):  # noqa: C901
-        from gallery_inspector.filtering import filter_files
+        from gallery_inspector.filtering import filter_files, FilterOptions
         from gallery_inspector.export import export_files_table
-        from gallery_inspector.analysis import analyze_directories
+        from gallery_inspector.analysis import analyze_files
 
         try:
             input_ps = [Path(p) for p in input_paths]
             output_p = Path(output_path)
 
             if func == "analysis":
-                df_images, df_videos, df_others = analyze_directories(
-                    input_ps,
-                    stop_event=self.stop_event,
-                    pause_event=self.pause_event,
-                    progress_callback=self.update_progress,
-                )
+                query = self.get_filter_query()
+
+                # Collect all files from input directories
+                all_files = [
+                    file for p in input_ps for file in p.rglob("*") if not file.is_dir()
+                ]
+
+                if not all_files:
+                    logger.warning("No files found to analyze.")
+                    df_images, df_videos, df_others = (
+                        pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                    )
+                elif self._is_query_empty(query):
+                    # No filters applied, analyze all files
+                    df_images, df_videos, df_others = analyze_files(
+                        all_files,
+                        stop_event=self.stop_event,
+                        pause_event=self.pause_event,
+                        progress_callback=self.update_progress,
+                    )
+                else:
+                    # Apply filters: first analyze, then filter
+                    df_images, df_videos, df_others = self._analyze_with_filters(
+                        all_files, query
+                    )
                 if self.stop_event.is_set():
                     logger.warning("Analysis cancelled by user.")
                     self.after(0, lambda: self.finish_stopped(btn))
