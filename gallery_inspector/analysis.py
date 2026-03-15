@@ -3,6 +3,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -16,8 +17,23 @@ from gallery_inspector.common import clean_excel_unsafe, rational_to_float
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".cr2", ".cr3"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
+
+def _get_exiftool_path() -> str:
+    """Return the path to the exiftool executable.
+
+    When the app is frozen by PyInstaller, bundled files are extracted to
+    sys._MEIPASS at runtime.  Fall back to the system PATH otherwise so that
+    the development workflow continues to work as before.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        bundled = os.path.join(sys._MEIPASS, "exiftool.exe")
+        if os.path.isfile(bundled):
+            return bundled
+    return "exiftool"
+
+
 EXIFTOOL_BASE_ARGS = [
-    "exiftool",
+    _get_exiftool_path(),
     "-j",
     "-n",
     "-fast2",

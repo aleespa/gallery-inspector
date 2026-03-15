@@ -5,219 +5,273 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
-import streamlit as st
 import pandas as pd
-from gallery_inspector.generate import (
-    generated_directory,
-    generated_directory_from_list,
-    Options,
-)
-# The plotting functions below were replaced by the new matplotlib implementation
-# from gallery_inspector.figures import (
-#     plot_interactive_timeline,
-#     plot_sunburst,
-#     plot_scatter,
-#     plot_file_types,
-#     plot_size_distribution,
-# )
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+import streamlit as st
 
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Gallery Inspector", layout="wide")
-
 st.title("Gallery Inspector Dashboard")
 
-# Sidebar
+# ── Helpers & Caching ─────────────────────────────────────────────────────────
+
+STACKED_COLORS = [
+    "#e60000", "#3d6ba6", "#65880f", "#4e4e94",
+    "#a70000", "#2b4e72", "#5f720f", "#313178",
+    "#ff5252", "#5a8cc2", "#8eb027", "#7474b0",
+    "#ff7b7b", "#a7c6ed", "#c1d64d", "#a1a1ce",
+]
+
+
+@st.cache_data
+def load_all_data(file_path):
+    """Load all 3 sheets and pre-process dates."""
+    xls = pd.ExcelFile(file_path)
+
+    def _load(name):
+        return pd.read_excel(xls, sheet_name=name) if name in xls.sheet_names else pd.DataFrame()
+
+    df_images = _load("images")
+    df_videos = _load("videos")
+    df_others = _load("others")
+
+    for df in (df_images, df_videos):
+        if "date_taken" in df.columns:
+            df["date_taken"] = pd.to_datetime(df["date_taken"], errors="coerce")
+
+    return df_images, df_videos, df_others
+
+
+def _parse_shutter(s) -> float | None:
+    if pd.isna(s): return None
+    try:
+        s_str = str(s).rstrip("s")
+        if "/" in s_str:
+            num, den = s_str.split("/")
+            return float(num) / float(den)
+        return float(s_str)
+    except Exception: return None
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.header("Configuration")
-excel_file = st.sidebar.file_uploader("Select Excel Workbook", type=["xlsx"])
+excel_file = st.sidebar.file_uploader("Select Excel Workbook (.xlsx)", type=["xlsx"])
 
-if excel_file:
-    with st.spinner("Loading data..."):
-        try:
-            df = pd.read_excel(excel_file)
-            # Convert date columns back to datetime objects if they were loaded as strings
-            if "DateTimeOriginal" in df.columns:
-                df["DateTimeOriginal"] = pd.to_datetime(df["DateTimeOriginal"])
-            st.session_state["df"] = df
-            st.success("Data loaded successfully!")
-        except Exception as e:
-            st.error(f"Error loading Excel file: {e}")
+if not excel_file:
+    st.info("Upload a Gallery Inspector Excel workbook to get started.")
+    st.stop()
 
-if "df" in st.session_state:
-    df = st.session_state["df"]
+# ── Load Data (Cached) ───────────────────────────────────────────────────────
+df_images, df_videos, df_others = load_all_data(excel_file)
 
-    # General Statistics
+if df_images.empty and df_videos.empty and df_others.empty:
+    st.error("No data found in the uploaded workbook.")
+    st.stop()
+
+
+# ── The Filtering + Viz Block (Fragmentized for performance) ──────────────────
+
+@st.fragment
+def main_app_block(df_images, df_videos, df_others):
+    # ── Filters ───────────────────────────────────────────────────────────────
+    st.header("Filters")
+
+    # Date Range Slider (by Month/Year)
+    date_mask = pd.Series(True, index=df_images.index)
+    if "date_taken" in df_images.columns and not df_images["date_taken"].dropna().empty:
+        df_dates = df_images[df_images["date_taken"].notna()]
+        min_date = df_dates["date_taken"].min()
+        max_date = df_dates["date_taken"].max()
+
+        # Generate monthly periods
+        periods = pd.period_range(start=min_date, end=max_date, freq="M")
+        period_strs = [p.strftime("%b %Y") for p in periods]
+
+        if len(period_strs) > 1:
+            st.write("**Image Date Range**")
+            selected_range = st.select_slider(
+                "Select month/year range",
+                options=period_strs,
+                value=(period_strs[0], period_strs[-1]),
+                label_visibility="collapsed"
+            )
+
+            # Map back to dates
+            start_p = periods[period_strs.index(selected_range[0])]
+            end_p = periods[period_strs.index(selected_range[1])]
+            date_mask &= (df_images["date_taken"].dt.to_period("M") >= start_p) & \
+                        (df_images["date_taken"].dt.to_period("M") <= end_p)
+        else:
+            st.write(f"Date: {min_date.strftime('%b %Y')}")
+
+    col1, col2 = st.columns(2)
+
+    cameras = sorted(df_images["camera"].dropna().unique()) if "camera" in df_images.columns else []
+    selected_cameras = col1.multiselect("Camera Model", cameras, default=cameras)
+
+    lenses = sorted(df_images["lens"].dropna().unique()) if "lens" in df_images.columns else []
+    selected_lenses = col2.multiselect("Lens Model", lenses, default=lenses)
+
+    # Apply all masks
+    mask = date_mask
+    if selected_cameras and "camera" in df_images.columns:
+        mask &= df_images["camera"].isin(selected_cameras)
+    if selected_lenses and "lens" in df_images.columns:
+        mask &= df_images["lens"].isin(selected_lenses)
+
+    fi = df_images[mask]
+    fv = df_videos # Currently not filtered by date/camera, but could be unified if needed.
+
+    # ── Summary Metrics ───────────────────────────────────────────────────────
     st.header("General Statistics")
+    total_images, total_videos, total_others = len(fi), len(fv), len(df_others)
+    total_files = total_images + total_videos + total_others
+    total_size = sum(df["size (MB)"].sum() for df in (fi, fv, df_others) if "size (MB)" in df.columns)
 
-    total_files = len(df)
-    total_images = len(df[df["media_type"] == "image"])
-    total_videos = len(df[df["media_type"] == "video"])
-    total_size_mb = df["size (MB)"].sum()
+    total_duration_sec = 0.0
+    if "duration_ms" in fv.columns:
+        total_duration_sec = fv["duration_ms"].sum(skipna=True) / 1000.0
+    h, m, s = int(total_duration_sec // 3600), int((total_duration_sec % 3600) // 60), int(total_duration_sec % 60)
 
-    total_duration_sec = 0
-    if "Duration" in df.columns:
-        total_duration_sec = df["Duration"].sum() / 1000  # Duration is usually in ms
+    mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+    mc1.metric("Total Files", f"{total_files:,}")
+    mc2.metric("Filtered Images", f"{total_images:,}")
+    mc3.metric("Videos", f"{total_videos:,}")
+    mc4.metric("Total Size", f"{total_size:,.0f} MB")
+    mc5.metric("Total Video Length", f"{h}h {m}m {s}s")
 
-    hours = int(total_duration_sec // 3600)
-    minutes = int((total_duration_sec % 3600) // 60)
-    seconds = int(total_duration_sec % 60)
-    duration_str = f"{hours}h {minutes}m {seconds}s"
+    # ── Data Tables ───────────────────────────────────────────────────────────
+    st.header("Data")
+    t1, t2, t3 = st.tabs([f"📷 Images ({len(fi):,})", f"🎬 Videos ({len(fv):,})", f"📄 Others ({len(df_others):,})"])
+    with t1: st.dataframe(fi, use_container_width=True, height=300)
+    with t2: st.dataframe(fv, use_container_width=True, height=300)
+    with t3: st.dataframe(df_others, use_container_width=True, height=300)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total Files", f"{total_files:,}")
-    c2.metric("Images", f"{total_images:,}")
-    c3.metric("Videos", f"{total_videos:,}")
-    c4.metric("Total Size", f"{total_size_mb:,.0f} MB")
-    c5.metric("Total Video Length", duration_str)
-
-    # Advanced Metrics
-    st.subheader("Advanced Metrics")
-    ac1, ac2, ac3 = st.columns(3)
-
-    avg_size = df["size (MB)"].mean()
-    ac1.metric("Average File Size", f"{avg_size:.2f} MB")
-
-    if "Model" in df.columns:
-        top_camera = df["Model"].mode()
-        top_camera_str = top_camera[0] if not top_camera.empty else "N/A"
-        ac2.metric("Most Common Camera", top_camera_str)
-
-    if "LensModel" in df.columns:
-        top_lens = df["LensModel"].mode()
-        top_lens_str = top_lens[0] if not top_lens.empty else "N/A"
-        ac3.metric("Most Common Lens", top_lens_str)
-
-    # Filters
-    st.header("Data Analysis")
-
-    col1, col2, col3 = st.columns(3)
-
-    # Date Filter
-    min_date = None
-    max_date = None
-    date_range = []
-
-    if "DateTimeOriginal" in df.columns:
-        min_date = df["DateTimeOriginal"].min()
-        max_date = df["DateTimeOriginal"].max()
-
-        if pd.notnull(min_date) and pd.notnull(max_date):
-            date_range = col1.date_input("Date Range", [min_date, max_date])
-
-    # Camera Filter
-    cameras = df["Model"].dropna().unique().tolist() if "Model" in df.columns else []
-    selected_cameras = col2.multiselect("Camera Model", cameras, default=cameras)
-
-    # Lens Filter
-    lenses = (
-        df["LensModel"].dropna().unique().tolist() if "LensModel" in df.columns else []
-    )
-    selected_lenses = col3.multiselect("Lens Model", lenses, default=lenses)
-
-    # Apply Filters
-    mask = pd.Series(True, index=df.index)
-
-    if (
-        "DateTimeOriginal" in df.columns
-        and pd.notnull(min_date)
-        and pd.notnull(max_date)
-        and len(date_range) == 2
-    ):
-        mask &= (df["DateTimeOriginal"].dt.date >= date_range[0]) & (
-            df["DateTimeOriginal"].dt.date <= date_range[1]
-        )
-
-    if "Model" in df.columns and selected_cameras:
-        mask &= df["Model"].isin(selected_cameras)
-
-    if "LensModel" in df.columns and selected_lenses:
-        mask &= df["LensModel"].isin(selected_lenses)
-
-    filtered_df = df[mask]
-
-    st.dataframe(filtered_df)
-
-    # Plotting
-    st.subheader("Interactive Timeline (Images)")
-    st.info("Interactive timelines have been replaced by static plots in the analysis directory.")
-
-    # Video Plotting
-    videos_df = filtered_df[filtered_df["media_type"] == "video"]
-    if not videos_df.empty:
-        st.subheader("Video Timeline")
-        st.info("Interactive video timelines have been replaced by static plots in the analysis directory.")
-
-    # New Plots
+    # ── Visualizations ────────────────────────────────────────────────────────
     st.header("Visualizations")
-    st.info("Visualizations are now automatically generated during the analysis step.")
 
-    # Organization
-    st.header("Organize Files")
-    st.markdown("Organize files from the filtered list into a new directory structure.")
+    # Row 1: Donut Charts
+    dist_col1, dist_col2, dist_col3 = st.columns(3)
+    with dist_col1:
+        st.subheader("File Types")
+        counts = {"Images": len(fi), "Videos": len(fv), "Others": len(df_others)}
+        counts = {k: v for k, v in counts.items() if v > 0}
+        if counts:
+            fig = px.pie(names=list(counts.keys()), values=list(counts.values()),
+                         color_discrete_sequence=["#66b3ff", "#99ff99", "#ff9999"], hole=0.4)
+            fig.update_traces(textposition="inside", textinfo="percent+label")
+            fig.update_layout(showlegend=False, margin=dict(l=20, r=20, t=20, b=20), height=300)
+            st.plotly_chart(fig, use_container_width=True, key="pie_file")
 
-    with st.expander("Organization Settings"):
-        output_dir = st.text_input("Output Directory")
-        by_media_type = st.checkbox(
-            "Separate by Media Type (Photos/Videos)", value=True
-        )
+    with dist_col2:
+        st.subheader("Cameras")
+        if "camera" in fi.columns and fi["camera"].dropna().any():
+            cam_counts = fi["camera"].value_counts().nlargest(10).reset_index()
+            cam_counts.columns = ["camera", "count"]
+            fig = px.pie(cam_counts, names="camera", values="count", color_discrete_sequence=STACKED_COLORS, hole=0.4)
+            fig.update_traces(textposition="inside", textinfo="percent")
+            fig.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.5), height=300, margin=dict(l=0, r=0, t=0, b=0))
+            st.plotly_chart(fig, use_container_width=True, key="pie_cam")
 
-        # Arguments for generated_directory (it takes *args for metadata fields to use in folder structure)
-        # Based on _process_single_file logic: target_dir / val1 / val2 ...
-        available_fields = ["Year", "Month", "Model", "Lens"]
+    with dist_col3:
+        st.subheader("Lenses")
+        if "lens" in fi.columns and fi["lens"].dropna().any():
+            lens_counts = fi["lens"].value_counts().nlargest(10).reset_index()
+            lens_counts.columns = ["lens", "count"]
+            fig = px.pie(lens_counts, names="lens", values="count", color_discrete_sequence=STACKED_COLORS, hole=0.4)
+            fig.update_traces(textposition="inside", textinfo="percent")
+            fig.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.5), height=300, margin=dict(l=0, r=0, t=0, b=0))
+            st.plotly_chart(fig, use_container_width=True, key="pie_lens")
 
-        # User-friendly multi-select that maintains order
-        selected_structure = st.multiselect(
-            "Folder Structure (Order Matters)",
-            available_fields,
-            default=["Year", "Month"],
-            help="Select the metadata fields to use for the folder hierarchy. The order of selection determines the nesting order.",
-        )
+    # Row 2: Settings (Reactive)
+    st.subheader("Camera Settings Distribution")
+    if not fi.empty:
+        settings_available = [c for c in ("aperture", "shutter_speed", "iso", "focal_length") if c in fi.columns]
+        if settings_available:
+            fig = make_subplots(rows=2, cols=2, subplot_titles=["Aperture", "Shutter Speed", "ISO", "Focal Length"])
+            STD_APERTURES = [1.2, 1.8, 2.2, 2.8, 3.5, 4.0, 5.6, 8, 11, 16, 22]
+            STD_SHUTTERS = [1/4000, 1/2000, 1/1000, 1/500, 1/250, 1/125, 1/60, 1/30, 1/15, 1/8, 1/4, 1/2, 1, 2, 4, 8, 15, 30]
+            STD_ISOS = [100, 200, 400, 800, 1600, 3200, 6400, 12800]
+            STD_FOCALS = [14, 18, 24, 28, 35, 50, 70, 85, 105, 135, 200, 300, 400]
 
-        on_exist = st.radio("If file exists", ["rename", "skip"], index=0)
+            def _log_hist(fig, series, row, col, color, tickvals, ticktext, name):
+                data = pd.to_numeric(series, errors="coerce").dropna()
+                data = data[(data > data.quantile(0.01)) & (data <= data.quantile(0.99)) & (data > 0)]
+                if data.empty: return
+                log_data = np.log10(data)
+                fig.add_trace(go.Histogram(x=log_data, nbinsx=30, marker_color=color, opacity=0.7, name=name, showlegend=False), row=row, col=col)
+                valid = [(v, t) for v, t in zip(tickvals, ticktext) if log_data.min()*0.9 <= np.log10(v) <= log_data.max()*1.1]
+                if valid:
+                    v_t, t_t = zip(*valid)
+                    fig.update_xaxes(tickvals=[np.log10(v) for v in v_t], ticktext=list(t_t), row=row, col=col, tickangle=45)
+                fig.update_yaxes(title_text="Count", row=row, col=col)
 
-        organize_btn = st.button("Start Organization")
+            _log_hist(fig, fi.get("aperture", pd.Series()), 1, 1, "coral", STD_APERTURES, [f"f{v:g}" for v in STD_APERTURES], "Aperture")
+            ss = fi["shutter_speed"].apply(_parse_shutter) if "shutter_speed" in fi.columns else pd.Series()
+            _log_hist(fig, ss, 1, 2, "orchid", STD_SHUTTERS, [f"1/{int(round(1/v))}" if v < 1 else f"{v:g}s" for v in STD_SHUTTERS], "Shutter")
+            _log_hist(fig, fi.get("iso", pd.Series()), 2, 1, "gold", STD_ISOS, [str(v) for v in STD_ISOS], "ISO")
+            _log_hist(fig, fi.get("focal_length", pd.Series()), 2, 2, "teal", STD_FOCALS, [f"{v}mm" for v in STD_FOCALS], "Focal Length")
+            fig.update_layout(height=600, margin=dict(t=50, b=50))
+            st.plotly_chart(fig, use_container_width=True, key="settings_hist")
 
-        if organize_btn:
-            if not output_dir:
-                st.error("Please specify an output directory.")
-            else:
-                out_path = Path(output_dir)
-                # We need to pass the filtered files to the organization function.
-                # generated_directory iterates over input_path.
-                # generated_directory_from_list iterates over a list of files.
-                # I should check if generated_directory_from_list exists in generate.py
+    # Row 3: Timelines
+    st.subheader("Photography Timeline")
+    _stacked_timeline(fi, "camera", "month", "Monthly Photo Count by Camera")
 
-                # Let's check generate.py content again to be sure about generated_directory_from_list
-                # It was in the file view earlier: line 211 def generated_directory_from_list
+    # Row 4: Video Timeline (Minutes per month)
+    if not fv.empty and "date_taken" in fv.columns and "duration_ms" in fv.columns:
+        st.subheader("Video Recording Summary")
+        tmp_v = fv.copy()
+        tmp_v["date_taken"] = pd.to_datetime(tmp_v["date_taken"], errors="coerce")
+        tmp_v = tmp_v.dropna(subset=["date_taken"])
+        if not tmp_v.empty:
+            tmp_v["month"] = tmp_v["date_taken"].dt.to_period("M").astype(str)
+            aggs = tmp_v.groupby("month")["duration_ms"].sum().reset_index()
+            aggs["minutes"] = aggs["duration_ms"] / 60000.0
+            fig = px.line(aggs, x="month", y="minutes", markers=True, title="Minutes Recorded per Month", color_discrete_sequence=["crimson"])
+            fig.update_layout(xaxis_tickangle=45, yaxis_title="Duration (Minutes)")
+            st.plotly_chart(fig, use_container_width=True, key="video_minutes")
 
-                files_to_process = [
-                    Path(row["directory"]) / row["name"]
-                    for _, row in filtered_df.iterrows()
-                ]
+    # Row 5: Map (Optimized)
+    has_coords = not fi.empty and "latitude" in fi.columns and "longitude" in fi.columns and fi[["latitude","longitude"]].dropna().shape[0] > 0
+    if has_coords:
+        st.header("Photo Map")
+        df_loc = fi[["latitude", "longitude", "camera", "date_taken", "name"]].copy()
+        df_loc["latitude"] = pd.to_numeric(df_loc["latitude"], errors="coerce")
+        df_loc["longitude"] = pd.to_numeric(df_loc["longitude"], errors="coerce")
+        df_loc = df_loc.dropna(subset=["latitude", "longitude"])
+        st.caption(f"Displaying {len(df_loc):,} geotagged photos")
 
-                if not files_to_process:
-                    st.warning("No files to process.")
-                else:
-                    with st.spinner(f"Organizing {len(files_to_process)} files..."):
-                        try:
-                            options = Options(
-                                by_media_type=by_media_type,
-                                structure=selected_structure,
-                                verbose=True,
-                                on_exist=on_exist,
-                            )
-                            # generated_directory(input_paths, output, options)
-                            # Since dashboard works on a single directory path (which is the parent of all files in the Excel)
-                            # but here it uses a list of files, generated_directory_from_list is better.
-                            # However, to maintain parity with the new API, I'll just note that generated_directory_from_list
-                            # is unchanged and still useful.
+        # Map combined: Heatmap + Scatter dots
+        fig_map = px.density_mapbox(df_loc, lat="latitude", lon="longitude", radius=8,
+                                    zoom=1, mapbox_style="carto-positron", color_continuous_scale="YlOrBr")
 
-                            # If we wanted to use generated_directory with multiple paths:
-                            # generated_directory([out_path.parent], out_path, options)
+        # For performant scatter on maps with large data, we use go.Scattermapbox
+        fig_map.add_trace(go.Scattermapbox(
+            lat=df_loc["latitude"], lon=df_loc["longitude"], mode="markers",
+            marker=dict(size=4, color="blue", opacity=0.3),
+            text=df_loc["camera"] + " - " + df_loc["name"],
+            hoverinfo="text", name="Photos", showlegend=False
+        ))
+        fig_map.update_layout(height=600, margin=dict(l=0, r=0, t=30, b=0), coloraxis_showscale=False)
+        st.plotly_chart(fig_map, use_container_width=True, key="combined_map")
 
-                            generated_directory_from_list(
-                                files_to_process, out_path, options
-                            )
-                            st.success(
-                                f"Successfully organized {len(files_to_process)} files to {out_path}"
-                            )
-                        except Exception as e:
-                            st.error(f"Error during organization: {e}")
+
+def _stacked_timeline(df: pd.DataFrame, group_by: str, time_by: str, title: str):
+    if "date_taken" not in df.columns or group_by not in df.columns or df.empty: return
+    tmp = df.copy()
+    tmp["period"] = tmp["date_taken"].dt.year.astype(str) if time_by == "year" else tmp["date_taken"].dt.to_period("M").astype(str)
+    tmp = tmp.dropna(subset=["period", group_by])
+    top = tmp[group_by].value_counts().nlargest(10).index
+    tmp[group_by] = tmp[group_by].where(tmp[group_by].isin(top), other="Other")
+    pivot = tmp.groupby(["period", group_by]).size().reset_index(name="count")
+    fig = px.bar(pivot, x="period", y="count", color=group_by, barmode="stack", color_discrete_sequence=STACKED_COLORS, title=title)
+    fig.update_layout(xaxis_tickangle=45)
+    st.plotly_chart(fig, use_container_width=True, key=f"timeline_{group_by}_{time_by}")
+
+
+# ── Executing the Main Block ──────────────────────────────────────────────────
+main_app_block(df_images, df_videos, df_others)
