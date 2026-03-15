@@ -19,35 +19,57 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".gif"}
 
 
 def _get_exiftool_path() -> str:
-    """Return the path to the exiftool executable.
-
-    When the app is frozen by PyInstaller, bundled files are extracted to
-    sys._MEIPASS at runtime.  Fall back to the system PATH otherwise so that
-    the development workflow continues to work as before.
-    """
+    """Return the path to the exiftool executable."""
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         bundled = os.path.join(sys._MEIPASS, "exiftool.exe")
         if os.path.isfile(bundled):
+            logger.info(f"Using bundled ExifTool at: {bundled}")
+
+            # Log the directory structure for debugging purposes
+            base_dir = sys._MEIPASS
+            exiftool_files_dir = os.path.join(base_dir, "exiftool_files")
+            logger.debug(f"Checking for exiftool_files dir: {exiftool_files_dir}")
+            if os.path.isdir(exiftool_files_dir):
+                logger.debug(
+                    f"exiftool_files dir exists. Contents: {os.listdir(exiftool_files_dir)}"
+                )
+                lib_dir = os.path.join(exiftool_files_dir, "lib")
+                if os.path.isdir(lib_dir):
+                    logger.debug(
+                        f"lib dir exists. First 10 contents: {os.listdir(lib_dir)[:10]}"
+                    )
+                else:
+                    logger.warning("lib directory not found in exiftool_files!")
+            else:
+                logger.warning("exiftool_files directory not found in bundle!")
             return bundled
-    return "exiftool"
+        else:
+            logger.warning(f"Bundled ExifTool not found at: {bundled}")
+
+    path = "exiftool"
+    logger.info(f"Using system ExifTool: {path}")
+    return path
 
 
-EXIFTOOL_BASE_ARGS = [
-    _get_exiftool_path(),
-    "-j",
-    "-n",
-    "-fast2",
-    "-m",
-    "-q",
-    "-q",
-    "-c",
-    "%.6f",
-    "-FileName",
-    "-Directory",
-    "-FileSize",
-    "-DateTimeOriginal",
-    "-CreateDate",
-]
+def _get_exiftool_base_args() -> List[str]:
+    return [
+        _get_exiftool_path(),
+        "-j",
+        "-n",
+        "-fast2",
+        "-m",
+        "-q",
+        "-q",
+        "-c",
+        "%.6f",
+        "-FileName",
+        "-Directory",
+        "-FileSize",
+        "-DateTimeOriginal",
+        "-CreateDate",
+    ]
+
+
 EXIFTOOL_IMAGE_TAG_ARGS = [
     "-Model",
     "-LensModel",
@@ -150,14 +172,39 @@ def run_exiftool_batch(file_paths: List[Path], tag_profile: str = "all") -> List
     elif tag_profile == "video":
         profile_tags = EXIFTOOL_VIDEO_TAG_ARGS
 
-    cmd = EXIFTOOL_BASE_ARGS + profile_tags + ["-@", tmp_path]
+    cmd = _get_exiftool_base_args() + profile_tags + ["-@", tmp_path]
+    exiftool_exe_path = cmd[0]
+    exiftool_cwd = os.path.dirname(exiftool_exe_path)
+
+    logger.debug(f"Running ExifTool command: {' '.join(cmd)}")
+    if exiftool_cwd:
+        logger.debug(f"Setting ExifTool CWD to: {exiftool_cwd}")
+
+    env = os.environ.copy()
+    if hasattr(sys, "_MEIPASS"):
+        # When bundled, exiftool's Perl interpreter needs help finding its libraries.
+        # The @INC array is empty by default. We can populate it by setting PERL5LIB.
+        # The 'strict.pm' module and others are located in the 'lib' directory.
+        perl_lib_path = os.path.join(sys._MEIPASS, "exiftool_files", "lib")
+        if os.path.isdir(perl_lib_path):
+            env["PERL5LIB"] = perl_lib_path
+            logger.info(f"Bundled mode: Setting PERL5LIB to '{perl_lib_path}'")
+        else:
+            logger.warning(
+                f"Perl 'lib' directory not found at: {perl_lib_path}. ExifTool will likely fail."
+            )
 
     try:
         process = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8"
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=exiftool_cwd or None,
+            env=env,
         )
         if process.stderr:
-            logger.debug(f"ExifTool stderr: {process.stderr}")
+            logger.debug(f"ExifTool stderr: {process.stderr.strip()}")
 
         if not process.stdout:
             return []

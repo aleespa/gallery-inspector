@@ -22,6 +22,7 @@ dependencies = [
     "streamlit==1.53.1",
     "streamlit-aggrid==1.2.1.post2",
     "streamlit-extras>=0.7.8",
+    "pandas-stubs~=2.2.3",
 ]
 
 [dependency-groups]

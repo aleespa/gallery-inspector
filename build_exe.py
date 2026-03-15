@@ -20,7 +20,6 @@ def build():
         "streamlit_aggrid",
         "streamlit_extras",
         "plotly",
-        "matplotlib",
         "ipython",
         "nbformat",
         "tornado",
