@@ -1,3 +1,4 @@
+import PIL.ImageChops
 import sys
 from pathlib import Path
 
@@ -13,8 +14,8 @@ import numpy as np
 import streamlit as st
 
 # ── Page config ───────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Gallery Inspector", layout="wide")
-st.title("Gallery Inspector Dashboard")
+st.set_page_config(page_title="Gallery Dashboard", layout="wide")
+st.title("Gallery Dashboard")
 
 # ── Helpers & Caching ─────────────────────────────────────────────────────────
 
@@ -40,7 +41,13 @@ def load_all_data(file_path):
 
     for df in (df_images, df_videos):
         if "date_taken" in df.columns:
-            df["date_taken"] = pd.to_datetime(df["date_taken"], errors="coerce")
+            # ExifTool often outputs dates as YYYY:MM:DD which pandas format="mixed" fails to parse
+            if df["date_taken"].dtype == "O":
+                df["date_taken"] = df["date_taken"].astype(str).str.replace(
+                    r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", regex=True
+                )
+            # format="mixed" helps suppress the UserWarning for inconsistent date formats
+            df["date_taken"] = pd.to_datetime(df["date_taken"], errors="coerce", format="mixed")
 
     return df_images, df_videos, df_others
 
@@ -108,12 +115,19 @@ def main_app_block(df_images, df_videos, df_others):
             st.write(f"Date: {min_date.strftime('%b %Y')}")
 
     col1, col2 = st.columns(2)
+    cameras = (
+        df_images["camera"].value_counts().index.tolist()
+        if "camera" in df_images.columns
+        else []
+    )
+    selected_cameras = col1.multiselect("Camera Model", cameras, default=[])
 
-    cameras = sorted(df_images["camera"].dropna().unique()) if "camera" in df_images.columns else []
-    selected_cameras = col1.multiselect("Camera Model", cameras, default=cameras)
-
-    lenses = sorted(df_images["lens"].dropna().unique()) if "lens" in df_images.columns else []
-    selected_lenses = col2.multiselect("Lens Model", lenses, default=lenses)
+    lenses = (
+        df_images["lens"].value_counts().index.tolist()
+        if "lens" in df_images.columns
+        else []
+    )
+    selected_lenses = col2.multiselect("Lens Model", lenses, default=[])
 
     # Apply all masks
     mask = date_mask
@@ -143,17 +157,66 @@ def main_app_block(df_images, df_videos, df_others):
     mc4.metric("Total Size", f"{total_size:,.0f} MB")
     mc5.metric("Total Video Length", f"{h}h {m}m {s}s")
 
-    # ── Data Tables ───────────────────────────────────────────────────────────
-    st.header("Data")
-    t1, t2, t3 = st.tabs([f"📷 Images ({len(fi):,})", f"🎬 Videos ({len(fv):,})", f"📄 Others ({len(df_others):,})"])
-    with t1: st.dataframe(fi, use_container_width=True, height=300)
-    with t2: st.dataframe(fv, use_container_width=True, height=300)
-    with t3: st.dataframe(df_others, use_container_width=True, height=300)
+
 
     # ── Visualizations ────────────────────────────────────────────────────────
     st.header("Visualizations")
 
     # Row 1: Donut Charts
+    _donut_charts(fi, fv, df_others)
+
+    # Row 2: Settings (Reactive)
+    _camera_settings_distribution(fi)
+
+    # Row 3: Timelines
+    st.header("Photography Timeline")
+    _stacked_timeline(fi, "camera", "month", "Monthly Photo Count by Camera")
+
+    # Row 4: Video Timeline (Minutes per month)
+    _video_recording_summary(fv)
+
+    # Row 5: Map (Optimized)
+    _photo_map(fi)
+
+    # ── Data Tables ───────────────────────────────────────────────────────────
+    _data_tables(fi, fv, df_others)
+
+
+def _stacked_timeline(df: pd.DataFrame, group_by: str, time_by: str, title: str):
+    if "date_taken" not in df.columns or group_by not in df.columns or df.empty: return
+    tmp = df.copy()
+    tmp["period"] = tmp["date_taken"].dt.year.astype(str) if time_by == "year" else tmp["date_taken"].dt.to_period("M").astype(str)
+    tmp = tmp[tmp["date_taken"].dt.date >= pd.Timestamp("1970-04-01").date()]
+    tmp = tmp.dropna(subset=["period", group_by])
+    top = tmp[group_by].value_counts().nlargest(10).index
+    tmp[group_by] = tmp[group_by].where(tmp[group_by].isin(top), other="Other")
+    pivot = tmp.groupby(["period", group_by]).size().reset_index(name="count")
+    fig = px.bar(pivot, x="period", y="count", color=group_by, barmode="stack", color_discrete_sequence=STACKED_COLORS, title=title)
+    fig.update_layout(xaxis_tickangle=45)
+    st.plotly_chart(fig, width="stretch", key=f"timeline_{group_by}_{time_by}")
+
+def _video_recording_summary(fv: pd.DataFrame):
+    if fv.empty or "date_taken" not in fv.columns or "duration_ms" not in fv.columns:
+        return
+    st.header("Video Recording Summary")
+    tmp_v = fv.copy()
+    if tmp_v["date_taken"].dtype == "O":
+        tmp_v["date_taken"] = tmp_v["date_taken"].astype(str).str.replace(
+            r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", regex=True
+        )
+    tmp_v["date_taken"] = pd.to_datetime(tmp_v["date_taken"], errors="coerce", format="mixed")
+    tmp_v = tmp_v.dropna(subset=["date_taken"])
+    tmp_v = tmp_v[tmp_v["date_taken"].dt.date != pd.Timestamp("1970-01-01").date()]
+    if tmp_v.empty:
+        return
+    tmp_v["month"] = tmp_v["date_taken"].dt.to_period("M").astype(str)
+    aggs = tmp_v.groupby("month")["duration_ms"].sum().reset_index()
+    aggs["minutes"] = aggs["duration_ms"] / 60000.0
+    fig = px.bar(aggs, x="month", y="minutes", title="Minutes Recorded per Month", color_discrete_sequence=["crimson"])
+    fig.update_layout(xaxis_tickangle=45, yaxis_title="Duration (Minutes)")
+    st.plotly_chart(fig, width="stretch", key="video_minutes")
+
+def _donut_charts(fi: pd.DataFrame, fv: pd.DataFrame, df_others: pd.DataFrame):
     dist_col1, dist_col2, dist_col3 = st.columns(3)
     with dist_col1:
         st.subheader("File Types")
@@ -164,7 +227,8 @@ def main_app_block(df_images, df_videos, df_others):
                          color_discrete_sequence=["#66b3ff", "#99ff99", "#ff9999"], hole=0.4)
             fig.update_traces(textposition="inside", textinfo="percent+label")
             fig.update_layout(showlegend=False, margin=dict(l=20, r=20, t=20, b=20), height=300)
-            st.plotly_chart(fig, use_container_width=True, key="pie_file")
+            # Replaced use_container_width with width="stretch" per Streamlit 1.35+ deprecation
+            st.plotly_chart(fig, width="stretch", key="pie_file")
 
     with dist_col2:
         st.subheader("Cameras")
@@ -174,7 +238,7 @@ def main_app_block(df_images, df_videos, df_others):
             fig = px.pie(cam_counts, names="camera", values="count", color_discrete_sequence=STACKED_COLORS, hole=0.4)
             fig.update_traces(textposition="inside", textinfo="percent")
             fig.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.5), height=300, margin=dict(l=0, r=0, t=0, b=0))
-            st.plotly_chart(fig, use_container_width=True, key="pie_cam")
+            st.plotly_chart(fig, width="stretch", key="pie_cam")
 
     with dist_col3:
         st.subheader("Lenses")
@@ -184,9 +248,9 @@ def main_app_block(df_images, df_videos, df_others):
             fig = px.pie(lens_counts, names="lens", values="count", color_discrete_sequence=STACKED_COLORS, hole=0.4)
             fig.update_traces(textposition="inside", textinfo="percent")
             fig.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.5), height=300, margin=dict(l=0, r=0, t=0, b=0))
-            st.plotly_chart(fig, use_container_width=True, key="pie_lens")
+            st.plotly_chart(fig, width="stretch", key="pie_lens")
 
-    # Row 2: Settings (Reactive)
+def _camera_settings_distribution(fi: pd.DataFrame):
     st.subheader("Camera Settings Distribution")
     if not fi.empty:
         settings_available = [c for c in ("aperture", "shutter_speed", "iso", "focal_length") if c in fi.columns]
@@ -215,63 +279,41 @@ def main_app_block(df_images, df_videos, df_others):
             _log_hist(fig, fi.get("iso", pd.Series()), 2, 1, "gold", STD_ISOS, [str(v) for v in STD_ISOS], "ISO")
             _log_hist(fig, fi.get("focal_length", pd.Series()), 2, 2, "teal", STD_FOCALS, [f"{v}mm" for v in STD_FOCALS], "Focal Length")
             fig.update_layout(height=600, margin=dict(t=50, b=50))
-            st.plotly_chart(fig, use_container_width=True, key="settings_hist")
+            st.plotly_chart(fig, width="stretch", key="settings_hist")
 
-    # Row 3: Timelines
-    st.subheader("Photography Timeline")
-    _stacked_timeline(fi, "camera", "month", "Monthly Photo Count by Camera")
-
-    # Row 4: Video Timeline (Minutes per month)
-    if not fv.empty and "date_taken" in fv.columns and "duration_ms" in fv.columns:
-        st.subheader("Video Recording Summary")
-        tmp_v = fv.copy()
-        tmp_v["date_taken"] = pd.to_datetime(tmp_v["date_taken"], errors="coerce")
-        tmp_v = tmp_v.dropna(subset=["date_taken"])
-        if not tmp_v.empty:
-            tmp_v["month"] = tmp_v["date_taken"].dt.to_period("M").astype(str)
-            aggs = tmp_v.groupby("month")["duration_ms"].sum().reset_index()
-            aggs["minutes"] = aggs["duration_ms"] / 60000.0
-            fig = px.line(aggs, x="month", y="minutes", markers=True, title="Minutes Recorded per Month", color_discrete_sequence=["crimson"])
-            fig.update_layout(xaxis_tickangle=45, yaxis_title="Duration (Minutes)")
-            st.plotly_chart(fig, use_container_width=True, key="video_minutes")
-
-    # Row 5: Map (Optimized)
+def _photo_map(fi: pd.DataFrame):
     has_coords = not fi.empty and "latitude" in fi.columns and "longitude" in fi.columns and fi[["latitude","longitude"]].dropna().shape[0] > 0
-    if has_coords:
-        st.header("Photo Map")
-        df_loc = fi[["latitude", "longitude", "camera", "date_taken", "name"]].copy()
-        df_loc["latitude"] = pd.to_numeric(df_loc["latitude"], errors="coerce")
-        df_loc["longitude"] = pd.to_numeric(df_loc["longitude"], errors="coerce")
-        df_loc = df_loc.dropna(subset=["latitude", "longitude"])
-        st.caption(f"Displaying {len(df_loc):,} geotagged photos")
+    if not has_coords:
+        return
+    st.header("Photo Map")
+    df_loc = fi[["latitude", "longitude", "camera", "date_taken", "name"]].copy()
+    df_loc["latitude"] = pd.to_numeric(df_loc["latitude"], errors="coerce")
+    df_loc["longitude"] = pd.to_numeric(df_loc["longitude"], errors="coerce")
+    df_loc = df_loc.dropna(subset=["latitude", "longitude"])
+    st.caption(f"Displaying {len(df_loc):,} geotagged photos")
 
-        # Map combined: Heatmap + Scatter dots
-        fig_map = px.density_mapbox(df_loc, lat="latitude", lon="longitude", radius=8,
-                                    zoom=1, mapbox_style="carto-positron", color_continuous_scale="YlOrBr")
+    # Map combined: Heatmap + Scatter dots
+    # density_mapbox is deprecated in favor of density_map
+    fig_map = px.density_map(df_loc, lat="latitude", lon="longitude", radius=10,
+                                zoom=2, map_style="open-street-map", color_continuous_scale="Viridis",
+                                opacity=0.75, range_color=[0, 100])
 
-        # For performant scatter on maps with large data, we use go.Scattermapbox
-        fig_map.add_trace(go.Scattermapbox(
-            lat=df_loc["latitude"], lon=df_loc["longitude"], mode="markers",
-            marker=dict(size=4, color="blue", opacity=0.3),
-            text=df_loc["camera"] + " - " + df_loc["name"],
-            hoverinfo="text", name="Photos", showlegend=False
-        ))
-        fig_map.update_layout(height=600, margin=dict(l=0, r=0, t=30, b=0), coloraxis_showscale=False)
-        st.plotly_chart(fig_map, use_container_width=True, key="combined_map")
+    # Scattermapbox is deprecated in favor of Scattermap
+    # fig_map.add_trace(go.Scattermap(
+    #     lat=df_loc["latitude"], lon=df_loc["longitude"], mode="markers",
+    #     marker=dict(size=4, color="blue", opacity=0.3),
+    #     text=df_loc["camera"] + " - " + df_loc["name"],
+    #     hoverinfo="text", name="Photos", showlegend=False
+    # ))
+    fig_map.update_layout(height=600, margin=dict(l=0, r=0, t=30, b=0), coloraxis_showscale=False)
+    st.plotly_chart(fig_map, width="stretch", key="combined_map")
 
-
-def _stacked_timeline(df: pd.DataFrame, group_by: str, time_by: str, title: str):
-    if "date_taken" not in df.columns or group_by not in df.columns or df.empty: return
-    tmp = df.copy()
-    tmp["period"] = tmp["date_taken"].dt.year.astype(str) if time_by == "year" else tmp["date_taken"].dt.to_period("M").astype(str)
-    tmp = tmp.dropna(subset=["period", group_by])
-    top = tmp[group_by].value_counts().nlargest(10).index
-    tmp[group_by] = tmp[group_by].where(tmp[group_by].isin(top), other="Other")
-    pivot = tmp.groupby(["period", group_by]).size().reset_index(name="count")
-    fig = px.bar(pivot, x="period", y="count", color=group_by, barmode="stack", color_discrete_sequence=STACKED_COLORS, title=title)
-    fig.update_layout(xaxis_tickangle=45)
-    st.plotly_chart(fig, use_container_width=True, key=f"timeline_{group_by}_{time_by}")
-
+def _data_tables(fi: pd.DataFrame, fv: pd.DataFrame, df_others: pd.DataFrame):
+    st.header("Data")
+    t1, t2, t3 = st.tabs([f"📷 Images ({len(fi):,})", f"🎬 Videos ({len(fv):,})", f"📄 Others ({len(df_others):,})"])
+    with t1: st.dataframe(fi, width="stretch", height=300)
+    with t2: st.dataframe(fv, width="stretch", height=300)
+    with t3: st.dataframe(df_others, width="stretch", height=300)
 
 # ── Executing the Main Block ──────────────────────────────────────────────────
 main_app_block(df_images, df_videos, df_others)

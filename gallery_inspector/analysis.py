@@ -380,10 +380,10 @@ def _format_df(df: pd.DataFrame, type_name: str) -> pd.DataFrame:
             if col in df.columns:
                 df[col] = df[col].map(rational_to_float)
 
-        if "date_taken" in df.columns:
-            df["date_taken"] = pd.to_datetime(
-                df["date_taken"], errors="coerce", format="%Y:%m:%d"
-            ).dt.date
+    if "date_taken" in df.columns:
+        df["date_taken"] = pd.to_datetime(
+            df["date_taken"], errors="coerce", format="%Y:%m:%d"
+        ).dt.date
 
     return df
 

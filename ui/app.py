@@ -21,8 +21,8 @@ from loguru import logger
 
 # from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from .theme import theme as _default_theme
-from .components import (
+from theme import theme as _default_theme
+from components import (
     MultiPathSelector,
     PathSelector,
     StructureSelector,
@@ -640,3 +640,7 @@ class GalleryInspectorUI(ctk.CTk):  # , TkinterDnD.DnDWrapper):
             text="Stopped", text_color=self.theme.status_stopped
         )
         messagebox.showwarning("Stopped", "Process was stopped by user.")
+
+if __name__ == "__main__":
+    app = GalleryInspectorUI()
+    app.mainloop()

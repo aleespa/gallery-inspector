@@ -5,7 +5,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from .theme import theme
+from theme import theme
 
 
 class MultiPathSelector(ctk.CTkFrame):

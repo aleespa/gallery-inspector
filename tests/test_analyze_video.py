@@ -1,3 +1,4 @@
+import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -39,7 +40,7 @@ class TestAnalyzeVideo(TestCase):
             result = df_videos.iloc[0]
             self.assertEqual(result["name"], "test")
             self.assertEqual(result["filetype"], ".mp4")
-            self.assertEqual(result["date_taken"], "2026:01:14")
+            self.assertEqual(result["date_taken"], datetime.date(2026, 1, 14))
             self.assertEqual(result["time_taken"], "16:57:59")
             self.assertEqual(result["size_bytes"], 1024)
             self.assertEqual(result["width"], 1920)
