@@ -21,8 +21,8 @@ from loguru import logger
 
 # from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from theme import theme as _default_theme
-from components import (
+from .theme import theme as _default_theme
+from .components import (
     MultiPathSelector,
     PathSelector,
     StructureSelector,
