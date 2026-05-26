@@ -47,7 +47,7 @@ def _get_exiftool_path() -> str:
             logger.warning(f"Bundled ExifTool not found at: {bundled}")
 
     path = "exiftool"
-    logger.info(f"Using system ExifTool: {path}")
+    # logger.info(f"Using system ExifTool: {path}")
     return path
 
 
@@ -176,9 +176,9 @@ def run_exiftool_batch(file_paths: List[Path], tag_profile: str = "all") -> List
     exiftool_exe_path = cmd[0]
     exiftool_cwd = os.path.dirname(exiftool_exe_path)
 
-    logger.debug(f"Running ExifTool command: {' '.join(cmd)}")
-    if exiftool_cwd:
-        logger.debug(f"Setting ExifTool CWD to: {exiftool_cwd}")
+    # logger.debug(f"Running ExifTool command: {' '.join(cmd)}")
+    # if exiftool_cwd:
+    #     logger.debug(f"Setting ExifTool CWD to: {exiftool_cwd}")
 
     env = os.environ.copy()
     if hasattr(sys, "_MEIPASS"):

@@ -200,8 +200,6 @@ def organize_files_by_options(
             if options.by_media_type and (is_image or is_video):
                 media_folder = "Photos" if is_image else "Videos"
                 target_dir = target_dir / media_folder
-            else:
-                target_dir = target_dir / "Other"
 
             metadata = _metadata_for_organization(filetype, raw_metadata)
 
@@ -223,10 +221,6 @@ def organize_files_by_options(
             destination = target_dir / file.name
 
             if options.on_exist == "skip" and destination.exists():
-                if options.verbose:
-                    logger.info(
-                        f"Skipping {file} as it already exists at {destination}"
-                    )
                 status = "skipped"
             else:
                 if options.on_exist == "rename" and destination.exists():
@@ -236,7 +230,6 @@ def organize_files_by_options(
                         destination = target_dir / f"{stem}_{counter}{suffix}"
                         counter += 1
 
-                logger.info(f"Copying {file} -> {destination}")
                 shutil.copy2(file, destination)
                 status = "copied"
 
@@ -245,15 +238,16 @@ def organize_files_by_options(
             status = "error"
 
         if status == "copied":
+            logger.success(f"File copied to target directory: {file}")
             successful_copies += 1
         else:
             excluded_files.append(file)
             if status == "error":
-                logger.warning(
+                logger.error(
                     f"File not copied to target directory due to error: {file}"
                 )
             elif status == "skipped":
-                logger.info(f"File skipped (already exists): {file}")
+                logger.warning(f"File skipped (already exists): {file}")
 
         if progress_callback:
             progress_callback(
