@@ -22,7 +22,7 @@ def main():
     files = [f for f in source.rglob("*") if f.is_file()]
     
     # Customizable filter extensions
-    photo_extensions = [".cr3", ".jpeg"]
+    photo_extensions = [".cr3", ".jpg"]
     video_extensions = [".mp4"]
     
     # Options for organizing files (default: structured by Year/Month, rename on exist)

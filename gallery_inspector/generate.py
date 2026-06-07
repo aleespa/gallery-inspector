@@ -67,6 +67,11 @@ def _normalize_path(path: str | Path) -> str:
 
 
 def _extract_year_month(date_value) -> tuple[Optional[str], Optional[str]]:
+    import pandas as pd
+
+    if pd.isna(date_value):
+        return None, None
+
     if isinstance(date_value, date):
         return str(date_value.year), f"{date_value.month:02d}"
 
@@ -238,7 +243,7 @@ def organize_files_by_options(
             status = "error"
 
         if status == "copied":
-            logger.success(f"File copied to target directory: {file}")
+            logger.success(f"File copied to target directory: {destination}")
             successful_copies += 1
         else:
             excluded_files.append(file)
@@ -247,7 +252,7 @@ def organize_files_by_options(
                     f"File not copied to target directory due to error: {file}"
                 )
             elif status == "skipped":
-                logger.warning(f"File skipped (already exists): {file}")
+                logger.warning(f"File skipped (already exists): {destination}")
 
         if progress_callback:
             progress_callback(

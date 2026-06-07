@@ -51,12 +51,13 @@ def _get_exiftool_path() -> str:
     return path
 
 
-def _get_exiftool_base_args() -> List[str]:
+def _get_exiftool_base_args(tag_profile: str = "all") -> List[str]:
+    fast_flag = "-fast2" if tag_profile == "image" else "-fast"
     return [
         _get_exiftool_path(),
         "-j",
         "-n",
-        "-fast2",
+        fast_flag,
         "-m",
         "-q",
         "-q",
@@ -172,7 +173,7 @@ def run_exiftool_batch(file_paths: List[Path], tag_profile: str = "all") -> List
     elif tag_profile == "video":
         profile_tags = EXIFTOOL_VIDEO_TAG_ARGS
 
-    cmd = _get_exiftool_base_args() + profile_tags + ["-@", tmp_path]
+    cmd = _get_exiftool_base_args(tag_profile) + profile_tags + ["-@", tmp_path]
     exiftool_exe_path = cmd[0]
     exiftool_cwd = os.path.dirname(exiftool_exe_path)
 
