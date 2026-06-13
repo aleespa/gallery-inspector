@@ -1,6 +1,5 @@
 import PyInstaller.__main__
 import os
-import customtkinter
 
 
 # Path to the local ExifTool installation to bundle into the executable.
@@ -8,9 +7,6 @@ EXIFTOOL_INSTALL_DIR = r"C:\Program Files\Exiftool"
 
 
 def build():
-    # Path to customtkinter
-    ctk_path = os.path.dirname(customtkinter.__file__)
-
     # Entry point
     entry_point = "main.py"
 
@@ -24,6 +20,8 @@ def build():
         "nbformat",
         "tornado",
         "watchdog",
+        "customtkinter",
+        "tkinterdnd2",
     ]
 
     # ExifTool paths
@@ -41,15 +39,12 @@ def build():
         entry_point,
         "--name=GalleryInspector",
         "--onefile",
-        "--windowed",  # No console
         "--clean",
-        f"--add-data={ctk_path};customtkinter/",
         # Bundle exiftool.exe into the root of the package
         f"--add-binary={exiftool_exe};.",
         "--collect-all=pymediainfo",
         "--collect-all=imageio",
         "--collect-all=rawpy",
-        "--collect-all=tkinterdnd2",
     ]
 
     # Bundle exiftool_files/ if present (required by the standalone exiftool.exe)

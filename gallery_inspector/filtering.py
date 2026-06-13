@@ -5,11 +5,11 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, List, Callable, Tuple
 
+import pandas as pd
 from loguru import logger
 
 from gallery_inspector.analysis import analyze_files
 from gallery_inspector.generate import Options, organize_files_by_options
-
 
 @dataclass
 class FilterOptions:
@@ -339,4 +339,165 @@ def filter_files(
         pause_event,
         progress_callback,
         metadata_lookup=metadata_lookup,
+    )
+
+
+def is_query_empty(query: FilterOptions) -> bool:
+    """Check if the filter query has any active filters."""
+    if not query:
+        return True
+    return not (
+        query.filetypes
+        or query.extensions
+        or query.date_range
+        or query.cameras
+        or query.lenses
+        or query.aperture_range
+        or query.iso_range
+        or query.shutter_speed_range
+    )
+
+
+def analyze_with_filters(
+    all_files: List[str | Path],
+    query: FilterOptions,
+    stop_event: Optional[threading.Event] = None,
+    pause_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[[float], None]] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Analyze files and filter results based on query."""
+    # First, analyze all files to get metadata
+    df_images, df_videos, df_others = analyze_files(
+        all_files,
+        stop_event=stop_event,
+        pause_event=pause_event,
+        progress_callback=progress_callback,
+    )
+
+    if stop_event and stop_event.is_set():
+        return df_images, df_videos, df_others
+
+    # Build metadata lookup for filtering
+    metadata_lookup = {}
+    for filetype, df in [("image", df_images), ("video", df_videos), ("other", df_others)]:
+        if df.empty:
+            continue
+        for row in df.to_dict("records"):
+            full_path = row.get("Full path")
+            if full_path:
+                metadata_lookup[_normalize_path(full_path)] = (filetype, row)
+
+    # Apply filters to each dataframe
+    normalized_extensions = (
+        [e.lower() for e in query.extensions] if query.extensions else None
+    )
+
+    def _should_keep_file(file_path, filetype, metadata):
+        """Check if a file matches the filter criteria."""
+        if not metadata:
+            return False
+
+        # Filter by filetype
+        if query.filetypes and filetype not in query.filetypes:
+            return False
+
+        # Photo-specific filters
+        has_photo_options = (
+            query.cameras or query.lenses or query.aperture_range
+            or query.iso_range or query.shutter_speed_range
+        )
+        if has_photo_options and filetype != "image":
+            return False
+
+        # Filter by extensions
+        if normalized_extensions:
+            ext = Path(file_path).suffix.lower()
+            if ext not in normalized_extensions:
+                return False
+
+        # Filter by date
+        if query.date_range:
+            start_date, end_date = query.date_range
+            dt = _parse_date_value(metadata.get("date_taken"))
+            if dt:
+                if start_date and dt < start_date:
+                    return False
+                if end_date and dt > end_date:
+                    return False
+            else:
+                return False
+
+        # Filter by camera
+        if query.cameras:
+            camera = metadata.get("camera")
+            if not camera or camera not in query.cameras:
+                return False
+
+        # Filter by lens
+        if query.lenses:
+            lens = metadata.get("lens")
+            if not lens or lens not in query.lenses:
+                return False
+
+        # Filter by aperture
+        if query.aperture_range:
+            min_ap, max_ap = query.aperture_range
+            aperture = metadata.get("aperture")
+            if aperture is None:
+                return False
+            if min_ap is not None and aperture < min_ap:
+                return False
+            if max_ap is not None and aperture > max_ap:
+                return False
+
+        # Filter by ISO
+        if query.iso_range:
+            min_iso, max_iso = query.iso_range
+            iso = metadata.get("iso")
+            if iso is None:
+                return False
+            if min_iso is not None and iso < min_iso:
+                return False
+            if max_iso is not None and iso > max_iso:
+                return False
+
+        # Filter by shutter speed
+        if query.shutter_speed_range:
+            min_ss_str, max_ss_str = query.shutter_speed_range
+            ss_str = metadata.get("shutter_speed")
+            if not ss_str:
+                return False
+            ss_val = _parse_shutter_speed(ss_str)
+            if min_ss_str:
+                min_ss = _parse_shutter_speed(min_ss_str)
+                if ss_val < min_ss:
+                    return False
+            if max_ss_str:
+                max_ss = _parse_shutter_speed(max_ss_str)
+                if ss_val > max_ss:
+                    return False
+
+        return True
+
+    # Filter each dataframe
+    filtered_images = []
+    filtered_videos = []
+    filtered_others = []
+
+    for file in all_files:
+        metadata_entry = metadata_lookup.get(_normalize_path(file))
+        if metadata_entry:
+            filetype, metadata = metadata_entry
+            if _should_keep_file(file, filetype, metadata):
+                if filetype == "image":
+                    filtered_images.append(metadata)
+                elif filetype == "video":
+                    filtered_videos.append(metadata)
+                else:
+                    filtered_others.append(metadata)
+
+    return (
+        pd.DataFrame(filtered_images) if filtered_images else pd.DataFrame(),
+        pd.DataFrame(filtered_videos) if filtered_videos else pd.DataFrame(),
+        pd.DataFrame(filtered_others) if filtered_others else pd.DataFrame(),
     )
