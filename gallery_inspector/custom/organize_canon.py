@@ -4,6 +4,11 @@ from gallery_inspector.filtering import filter_files, FilterOptions
 from gallery_inspector.generate import Options
 
 
+def _drive_db(target: Path) -> Path:
+    """Return the per-drive database path, e.g. E:\\Photos\\Canon -> E:\\Metadata.xlsx."""
+    return Path(target.anchor) / "Metadata.xlsx"
+
+
 def main():
     # Source directory to search files in (customizable)
     source = Path(r"F:\\")
@@ -45,22 +50,25 @@ def main():
         extensions=video_extensions
     )
     
-    # Process and organize photos to all photo target directories
+    # Process and organize photos to all photo target directories.
+    # Each drive's root Metadata.xlsx is updated incrementally with what was placed.
     for target in photo_targets:
         filter_files(
             files=files,
             output_dir=target,
             options=options,
-            query=photo_query
+            query=photo_query,
+            database_path=_drive_db(target),
         )
-        
+
     # Process and organize videos to all video target directories
     for target in video_targets:
         filter_files(
             files=files,
             output_dir=target,
             options=options,
-            query=video_query
+            query=video_query,
+            database_path=_drive_db(target),
         )
 
 

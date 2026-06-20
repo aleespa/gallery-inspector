@@ -172,6 +172,12 @@ def parse_args():
         help="Handling of file name conflict in destination (default: rename)."
     )
     filter_cmd_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="Path to a Metadata.xlsx database to update incrementally with the files placed during this import (e.g. E:\\Metadata.xlsx)."
+    )
+    filter_cmd_parser.add_argument(
         "--verbose",
         action="store_true",
         default=True,
@@ -183,7 +189,25 @@ def parse_args():
         dest="verbose",
         help="Disable verbose logging."
     )
-    
+
+    # 3. Rebuild-database Subparser (full scan, used to seed a drive)
+    rebuild_parser = subparsers.add_parser(
+        "rebuild-database",
+        help="Full-scan one or more directories and write a fresh Metadata.xlsx database (use to seed a drive that already holds files)."
+    )
+    rebuild_parser.add_argument(
+        "inputs",
+        nargs="+",
+        type=Path,
+        help="One or more directories to scan (e.g. the drive root E:\\)."
+    )
+    rebuild_parser.add_argument(
+        "-o", "--output",
+        required=True,
+        type=Path,
+        help="Path to the Metadata.xlsx database to write (overwritten if it exists)."
+    )
+
     return parser.parse_args()
 
 
@@ -317,11 +341,46 @@ def handle_filter(args):
             options,
             query,
             progress_callback=cb,
+            database_path=args.database,
         )
     finally:
         cb.close()
 
     logger.success(f"Filtering complete. Files organized in: {args.output}")
+    if args.database:
+        logger.success(f"Database updated: {args.database}")
+
+
+def handle_rebuild_database(args):
+    from gallery_inspector.export import export_files_table
+
+    all_files = []
+    for p in args.inputs:
+        if p.is_dir():
+            for file in p.rglob("*"):
+                if not file.is_dir():
+                    all_files.append(file)
+        elif p.is_file():
+            all_files.append(p)
+
+    if not all_files:
+        logger.warning("No files found to build database from.")
+        sys.exit(0)
+
+    logger.info(f"Rebuilding database from {len(all_files)} files...")
+
+    cb = TqdmProgressCallback("Scanning")
+    try:
+        df_images, df_videos, df_others = analyze_files(
+            all_files,
+            progress_callback=cb,
+        )
+    finally:
+        cb.close()
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    export_files_table(df_images, df_videos, df_others, args.output)
+    logger.success(f"Database rebuilt: {args.output}")
 
 
 def main():
@@ -336,6 +395,8 @@ def main():
             handle_analyze(args)
         elif args.command == "filter":
             handle_filter(args)
+        elif args.command == "rebuild-database":
+            handle_rebuild_database(args)
     except Exception as e:
         logger.exception(f"An unexpected error occurred during execution: {e}")
         sys.exit(1)

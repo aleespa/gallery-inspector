@@ -10,6 +10,7 @@ from typing import Callable, List, Literal, Optional
 from loguru import logger
 
 from gallery_inspector.analysis import analyze_files
+from gallery_inspector.database import destination_row
 
 OrderType = Literal["Year/Month", "Year", "Camera", "Lens", "Camera/Lens"]
 
@@ -133,11 +134,13 @@ def organize_files_by_options(
     pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
     metadata_lookup: Optional[dict[str, tuple[str, dict]]] = None,
-) -> None:
+) -> dict[str, list[dict]]:
+    organized: dict[str, list[dict]] = {"image": [], "video": [], "other": []}
+
     total_files = len(files_list)
     if total_files == 0:
         logger.warning("No files found to organize.")
-        return
+        return organized
 
     logger.info(f"Organizing {total_files} files into {output}...")
     successful_copies = 0
@@ -242,6 +245,11 @@ def organize_files_by_options(
             logger.error(f"Failed to process {file}: {e}")
             status = "error"
 
+        if status in ("copied", "skipped"):
+            # Record the file in the drive database (destination-keyed). Skipped
+            # files are already on the drive, so they belong in the database too.
+            _record_organized(organized, filetype, raw_metadata, destination)
+
         if status == "copied":
             logger.success(f"File copied to target directory: {destination}")
             successful_copies += 1
@@ -260,6 +268,36 @@ def organize_files_by_options(
             )
 
     _final_report(total_files, successful_copies, excluded_files)
+
+    return organized
+
+
+def _record_organized(
+    organized: dict[str, list[dict]],
+    filetype: str,
+    raw_metadata: Optional[dict],
+    destination: Path,
+) -> None:
+    """Append a destination-keyed metadata row for a placed file."""
+    if raw_metadata and filetype in ("image", "video"):
+        organized[filetype].append(destination_row(raw_metadata, destination))
+        return
+
+    # No EXIF (or non-media): record a minimal 'other' row from the file itself.
+    try:
+        size_bytes = destination.stat().st_size
+    except OSError:
+        size_bytes = None
+    organized["other"].append(
+        {
+            "name": destination.stem,
+            "filetype": destination.suffix.lower(),
+            "directory": str(destination.parent),
+            "Full path": str(destination),
+            "size_bytes": size_bytes,
+            "size (MB)": round(size_bytes / 1048576, 2) if size_bytes else 0.0,
+        }
+    )
 
 
 def _final_report(total: int, copied: int, excluded: List[Path]) -> None:

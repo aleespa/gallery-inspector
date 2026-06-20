@@ -9,6 +9,7 @@ import pandas as pd
 from loguru import logger
 
 from gallery_inspector.analysis import analyze_files
+from gallery_inspector.database import update_database
 from gallery_inspector.generate import Options, organize_files_by_options
 
 @dataclass
@@ -73,7 +74,8 @@ def filter_files(
     stop_event: Optional[threading.Event] = None,
     pause_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
-):
+    database_path: Optional[str | Path] = None,
+) -> dict[str, list[dict]]:
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Starting filtering {output_dir}")
 
@@ -331,7 +333,7 @@ def filter_files(
                 extraction_weight + ((i + 1) / total_files) * (1.0 - extraction_weight)
             )
 
-    organize_files_by_options(
+    organized = organize_files_by_options(
         filtered_files,
         output_dir,
         options,
@@ -340,6 +342,16 @@ def filter_files(
         progress_callback,
         metadata_lookup=metadata_lookup,
     )
+
+    if database_path is not None:
+        update_database(
+            database_path,
+            organized.get("image"),
+            organized.get("video"),
+            organized.get("other"),
+        )
+
+    return organized
 
 
 def is_query_empty(query: FilterOptions) -> bool:
